@@ -35,10 +35,15 @@
       #log .req { color: #ffe14d; }
       #log .res-ok { color: #5fe08a; }
       #log .res-err { color: #ff7b7b; }
+      #compass {
+        position: fixed; top: 12px; right: 12px; width: 96px; height: 96px;
+        pointer-events: none;
+      }
     </style>
   </head>
   <body>
     <div id="app"></div>
+    <canvas id="compass"></canvas>
     <div id="hud">
       <div><b>Navmesh Visualization</b></div>
       <div>Drag to orbit, scroll to zoom.</div>
@@ -53,6 +58,11 @@
       <div id="status">Loading geometry...</div>
       <button id="reset">Reset S/G</button>
       <button id="clearLog">Clear log</button>
+      <label id="stitchToggle" style="display:block; margin-top:10px;">
+        <input type="checkbox" id="showStitch" /> Stitch edges
+        <span style="color:#00e5ff">0x00</span><span class="s">(terrain)</span>
+        / <span style="color:#ff6ad5">0x08</span><span class="s">(object)</span>
+      </label>
       <div id="log"></div>
     </div>
     <script type="module" src="/src/main.js"></script>

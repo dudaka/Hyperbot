@@ -53,6 +53,56 @@ world.add(markerGroup);
 let pathLine = null;
 let endpoints = []; // [{ vec: THREE.Vector3 (absolute), kind: 'S'|'G' }]
 
+// Overlay for object outline "stitch" edges: 0x00 = object<->terrain stitch,
+// 0x08 = object<->object stitch. Hidden by default; toggled from the HUD.
+const stitchGroup = new THREE.Group();
+stitchGroup.visible = false;
+world.add(stitchGroup);
+const showStitch = document.getElementById('showStitch');
+
+function clearStitch() {
+  for (const lines of stitchGroup.children) {
+    lines.geometry.dispose();
+    lines.material.dispose();
+  }
+  stitchGroup.clear();
+}
+
+// Builds always-on-top line overlays for the 0x00 and 0x08 outline edges so they
+// can be located even behind structures.
+function buildStitchEdges(regions) {
+  const byFlag = { 0: [], 8: [] }; // 0x00, 0x08 -> flat [x,y,z,...] segment pairs
+  const lift = 1.5; // raise off the surface a touch
+  for (const region of regions) {
+    for (const object of region.objects) {
+      const P = object.positions;
+      const E = object.outlineEdges || [];
+      for (let i = 0; i < E.length; i += 3) {
+        const arr = byFlag[E[i + 2]];
+        if (!arr) continue; // only 0x00 and 0x08
+        const s = E[i] * 3, d = E[i + 1] * 3;
+        arr.push(P[s], P[s + 1] + lift, P[s + 2], P[d], P[d + 1] + lift, P[d + 2]);
+      }
+    }
+  }
+  const colors = { 0: 0x00e5ff, 8: 0xff6ad5 };
+  for (const flag of [0, 8]) {
+    const pts = byFlag[flag];
+    if (pts.length === 0) continue;
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(pts), 3));
+    const material = new THREE.LineBasicMaterial({
+      color: colors[flag], depthTest: false, depthWrite: false });
+    const lines = new THREE.LineSegments(geometry, material);
+    lines.renderOrder = 999; // draw on top of surfaces
+    stitchGroup.add(lines);
+  }
+}
+
+showStitch.addEventListener('change', () => {
+  stitchGroup.visible = showStitch.checked;
+});
+
 function colorForArea(areaId) {
   // Distinct hue per object area/floor so stacked surfaces are distinguishable.
   const hue = (areaId * 0.18 + 0.08) % 1.0;
@@ -122,6 +172,7 @@ function makeObjectMesh(object) {
 // active selection, so a fresh region set can be loaded into the same group.
 function clearWorld() {
   clearSelection();
+  clearStitch();
   for (const mesh of pickables) {
     world.remove(mesh);
     mesh.geometry.dispose();
@@ -156,6 +207,9 @@ async function loadGeometry(radius) {
       addPositions(object.positions);
     }
   }
+
+  buildStitchEdges(data.regions);
+  stitchGroup.visible = showStitch.checked;
 
   bbox.getCenter(originOffset);
   world.position.copy(originOffset).multiplyScalar(-1);
@@ -258,9 +312,63 @@ window.addEventListener('resize', () => {
   renderer.setSize(window.innerWidth, window.innerHeight);
 });
 
+// --- Compass ------------------------------------------------------------------
+// World +Z is North and +X is East (Silkroad region axes). Each frame the world
+// axes are projected to screen so the rose stays correct through any rotation.
+const compass = document.getElementById('compass');
+const compassCtx = compass.getContext('2d');
+const compassSize = 96;
+{
+  const dpr = window.devicePixelRatio || 1;
+  compass.width = compassSize * dpr;
+  compass.height = compassSize * dpr;
+  compassCtx.scale(dpr, dpr);
+}
+const compassDirs = [
+  { label: 'N', v: [0, 0, 1], accent: true },
+  { label: 'E', v: [1, 0, 0] },
+  { label: 'S', v: [0, 0, -1] },
+  { label: 'W', v: [-1, 0, 0] },
+];
+const _ca = new THREE.Vector3();
+const _cb = new THREE.Vector3();
+function screenDir(x, y, z) {
+  _ca.copy(controls.target).project(camera);
+  _cb.set(x, y, z).multiplyScalar(200).add(controls.target).project(camera);
+  const dx = _cb.x - _ca.x, dy = _cb.y - _ca.y;
+  const len = Math.hypot(dx, dy) || 1;
+  return [dx / len, dy / len];
+}
+function drawCompass() {
+  const s = compassSize, c = s / 2, r = s / 2 - 18;
+  compassCtx.clearRect(0, 0, s, s);
+  compassCtx.beginPath();
+  compassCtx.arc(c, c, r + 10, 0, Math.PI * 2);
+  compassCtx.fillStyle = 'rgba(16, 20, 28, 0.82)';
+  compassCtx.fill();
+  compassCtx.strokeStyle = '#2a3342';
+  compassCtx.stroke();
+  compassCtx.font = 'bold 12px ui-monospace, Menlo, monospace';
+  compassCtx.textAlign = 'center';
+  compassCtx.textBaseline = 'middle';
+  for (const d of compassDirs) {
+    const [sx, sy] = screenDir(d.v[0], d.v[1], d.v[2]);
+    const px = c + sx * r, py = c - sy * r; // canvas y is down; NDC y is up
+    compassCtx.beginPath();
+    compassCtx.moveTo(c, c);
+    compassCtx.lineTo(px, py);
+    compassCtx.strokeStyle = d.accent ? '#ff7b7b' : '#46536b';
+    compassCtx.lineWidth = d.accent ? 2 : 1;
+    compassCtx.stroke();
+    compassCtx.fillStyle = d.accent ? '#ff7b7b' : '#9aa6b8';
+    compassCtx.fillText(d.label, c + sx * (r + 9), c - sy * (r + 9));
+  }
+}
+
 function animate() {
   requestAnimationFrame(animate);
   controls.update();
+  drawCompass();
   renderer.render(scene, camera);
 }
 animate();
@@ -300,3 +408,28 @@ async function init() {
 }
 
 init();
+
+// Debug hook for automated/visual testing: place S and G from absolute coords
+// and run the path query, bypassing mouse picking.
+window.__vizQuery = (s, g) => {
+  clearSelection();
+  for (const [p, kind] of [[s, 'S'], [g, 'G']]) {
+    const vec = new THREE.Vector3(p.x, p.y, p.z);
+    endpoints.push({ vec, kind });
+    addMarker(vec, kind);
+  }
+  return queryPath();
+};
+
+// Debug hook: aim the camera at an absolute-frame point from a given distance
+// and azimuth/elevation (degrees), for framing screenshots.
+window.__vizFocus = (target, radius = 400, azDeg = 45, elDeg = 30) => {
+  const az = azDeg * Math.PI / 180, el = elDeg * Math.PI / 180;
+  const t = new THREE.Vector3(target.x, target.y, target.z).sub(originOffset);
+  controls.target.copy(t);
+  camera.position.set(
+    t.x + radius * Math.cos(el) * Math.sin(az),
+    t.y + radius * Math.sin(el),
+    t.z + radius * Math.cos(el) * Math.cos(az));
+  controls.update();
+};

@@ -34,7 +34,9 @@ and caches geometry per radius, so the web UI can switch scope with no reload.
 ```
 
 Endpoints (CORS-enabled):
-- `GET /geometry?r=N` - region set at ring radius N (clamped to the loaded max).
+- `GET /geometry?r=N` - region set at ring radius N (clamped to the loaded max). Each object
+  also carries `outlineEdges` (flat `[srcVertexIndex, destVertexIndex, flag]` triples) for
+  edge inspection - flag `0x00` = object<->terrain stitch, `0x08` = object<->object stitch.
 - `GET /path?sx&sy&sz&gx&gy&gz` - Polyanya path between two absolute-frame points.
 - `GET /info` - `{"maxRadius":N}`, the largest ring the client may request.
 
@@ -57,4 +59,15 @@ An **on-screen log panel** (and the browser console) records every pick (surface
 absolute coords) and every `/path` request + response - use it to capture the
 exact input behind a misbehaving query. "Clear log" empties it.
 
-See `../../docs/threejs-visualization-plan.md` for status, findings, and gaps.
+UI extras:
+- **Compass** (top-right) - projects the world axes each frame (`+Z`=North, `+X`=East).
+  May read mirror-flipped vs the in-game compass (left-handed Silkroad vs right-handed
+  three.js); still a consistent orientation reference.
+- **Stitch-edge toggle** (HUD checkbox, off by default) - overlays object outline edges:
+  cyan `0x00` (object<->terrain) and magenta `0x08` (object<->object), always-on-top.
+- **Debug hooks** (browser console) - `window.__vizQuery(s, g)` runs a path query from
+  absolute-coord objects `{x,y,z}`; `window.__vizFocus(target, radius, azDeg, elDeg)` aims
+  the camera. Used for automated/visual testing.
+
+See `../../docs/threejs-visualization-plan.md` for status, findings, and gaps, and
+`../../docs/pathfinding.md` for the backend authority (incl. the `0x00`/`0x08` semantics).

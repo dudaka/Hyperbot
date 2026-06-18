@@ -33,6 +33,7 @@ distribute(const T &n) {
 #include "pathfinder.h"
 #include "path.h"
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <limits>
@@ -63,10 +64,21 @@ std::vector<float> surfaceHeightsAtPoint(
   if (it == regionMap.end()) {
     return heights;
   }
-  heights.push_back(it->second.getHeightAtPoint(regionPoint));
+  const sro::navmesh::Region &region = it->second;
+
+  // Offer the terrain surface only where its tile is walkable. Unwalkable tiles
+  // are blocked terrain (e.g. a fortress wall face); a path must never rest on
+  // them, so they are not candidate heights. Stacked object floors over this
+  // column - the rampart walkway that actually spans such a wall - remain
+  // candidates below. Tiles are 20 units across a 1920-unit region (96 tiles).
+  const int tileCol = std::clamp(static_cast<int>(regionPoint.x / 20.0f), 0, 95);
+  const int tileRow = std::clamp(static_cast<int>(regionPoint.z / 20.0f), 0, 95);
+  if (region.enabledTiles[tileRow][tileCol]) {
+    heights.push_back(region.getHeightAtPoint(regionPoint));
+  }
 
   // Each (object instance, area) over this column is a separate stacked floor.
-  for (uint32_t instanceId : it->second.objectInstanceIds) {
+  for (uint32_t instanceId : region.objectInstanceIds) {
     sro::navmesh::ObjectResource resource;
     try {
       resource = navmesh.getTransformedObjectResourceForRegion(instanceId, regionId);
@@ -87,17 +99,25 @@ std::vector<float> surfaceHeightsAtPoint(
 }
 
 // Assigns a height to each 2D waypoint by choosing, per waypoint, one of its
-// stacked surfaces (terrain or an object floor) so that the total vertical
-// movement along the path is minimized, anchored to the clicked start and goal
-// heights. A purely greedy nearest-altitude walk stays stuck on terrain because
-// each surface is locally continuous; this global choice instead commits to the
+// stacked surfaces (terrain or an object floor) so that vertical movement along
+// the path is minimized, anchored to the clicked start and goal heights. A
+// purely greedy nearest-altitude walk stays stuck on terrain because each
+// surface is locally continuous; this global choice instead commits to the
 // object floor that actually reaches the goal, so the path climbs onto a
-// structure and follows it. Waypoints carry only (x, z); heights[i] is the Y.
+// structure and follows it. The step cost is the squared height difference, so
+// it strictly prefers spreading a climb across many small steps over one large
+// teleport (sum of |dY| is indifferent to that - it telescopes to the same
+// total - and would otherwise leave the path free to jump). Waypoints carry
+// only (x, z); heights[i] is the Y.
 std::vector<float> reconstructHeights(
     const sro::navmesh::Navmesh &navmesh,
     const sro::navmesh::triangulation::NavmeshTriangulation &triangulation,
     const std::vector<std::pair<float, float>> &points,
     float startY, float goalY) {
+  auto stepCost = [](float a, float b) -> float {
+    const float d = a - b;
+    return d * d;
+  };
   const size_t n = points.size();
   std::vector<std::vector<float>> candidates(n);
   for (size_t i = 0; i < n; ++i) {
@@ -109,7 +129,7 @@ std::vector<float> reconstructHeights(
     }
   }
 
-  // DP over the candidate lattice. cost[i][j] = least total |dY| to reach
+  // DP over the candidate lattice. cost[i][j] = least total step cost to reach
   // candidate j of waypoint i (including the start anchor); back[i][j] is the
   // chosen predecessor candidate.
   const float kInf = std::numeric_limits<float>::max();
@@ -120,13 +140,13 @@ std::vector<float> reconstructHeights(
     back[i].assign(candidates[i].size(), -1);
   }
   for (size_t j = 0; j < candidates[0].size(); ++j) {
-    cost[0][j] = std::abs(candidates[0][j] - startY);
+    cost[0][j] = stepCost(candidates[0][j], startY);
   }
   for (size_t i = 1; i < n; ++i) {
     for (size_t j = 0; j < candidates[i].size(); ++j) {
       for (size_t k = 0; k < candidates[i - 1].size(); ++k) {
         const float c =
-            cost[i - 1][k] + std::abs(candidates[i][j] - candidates[i - 1][k]);
+            cost[i - 1][k] + stepCost(candidates[i][j], candidates[i - 1][k]);
         if (c < cost[i][j]) {
           cost[i][j] = c;
           back[i][j] = static_cast<int>(k);
@@ -140,7 +160,7 @@ std::vector<float> reconstructHeights(
   int chosen = 0;
   float bestCost = kInf;
   for (size_t j = 0; j < candidates[n - 1].size(); ++j) {
-    const float c = cost[n - 1][j] + std::abs(candidates[n - 1][j] - goalY);
+    const float c = cost[n - 1][j] + stepCost(candidates[n - 1][j], goalY);
     if (c < bestCost) {
       bestCost = c;
       chosen = static_cast<int>(j);
@@ -187,7 +207,7 @@ PathResult findPath(
   // span terrain whose height varies a lot. Subdivide each segment into short
   // steps so the second pass can sample the surface along it and the path hugs
   // the ground instead of cutting a straight chord through it.
-  constexpr double kMaxStep = 30.0; // units between samples (terrain tile = 20)
+  constexpr double kMaxStep = 10.0; // units between samples (terrain tile = 20)
   auto addSegment = [&](double sx, double sz, double ex, double ez) {
     addPoint(sx, sz);
     const double dx = ex - sx;

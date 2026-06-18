@@ -587,6 +587,17 @@ absl::InlinedVector<SingleRegionNavmeshTriangulation::State, 3> SingleRegionNavm
     if (neighborAcrossEdge) {
       // Neighbor exists
       auto possibleSuccessor = getSuccessorStateThroughEdgeIfPossible(neighborAcrossEdge->sharedEdgeIndex, neighborAcrossEdge->neighborTriangleIndex);
+      if (possibleSuccessor &&
+          !possibleSuccessor->isOnObject() &&
+          terrainIsBlockedUnderTriangle(neighborAcrossEdge->neighborTriangleIndex)) {
+        // A successor that stays on the terrain must not enter a blocked terrain
+        // triangle (e.g. a fortress wall face). Blocked terrain cells carry no
+        // blocking constraint edge - they are only flagged per-triangle - so
+        // without this check the search walks straight across blocked terrain.
+        // Stepping onto an object (its own surface) over the same cell is still
+        // allowed, which is how a rampart walkway legitimately spans a wall.
+        possibleSuccessor.reset();
+      }
       if (possibleSuccessor) {
         successors.push_back(*possibleSuccessor);
       }

@@ -42,8 +42,14 @@ PK2 navmesh data  ->  Navmesh  ->  NavmeshTriangulation  ->  Pathfinder (Polyany
 per tile, region = 1920 units), surface flags (water/ice) + `surfaceHeights`, navigation
 cells, and edges (`InternalEdge` within a region, `GlobalEdge` on region borders, with
 block/bridge/entrance/siege flags). It also loads object meshes: `ObjectResource`
-(`vertices: vector<Vector3>`, triangle `cells`, `cellAreaIds`) and `ObjectInstance`
-(placement: `center`, `yaw`, `regionId`).
+(`vertices: vector<Vector3>`, triangle `cells`, `cellAreaIds`, plus `outlineEdges` /
+`inlineEdges` as `PrimMeshNavEdge` with a raw `flag`) and `ObjectInstance` (placement:
+`center`, `yaw`, `regionId`). **Object outline-edge flags** (`EdgeFlag`: block bits
+`0x01`/`0x02`, `kInternal=4`, `kGlobal=8`, `kBridge=16`, `kEntrance=32`, `kSiege=128`)
+matter for stitching: an outline edge with flag **`0x00` stitches the object to the
+terrain** (a real on-ramp where heights match), whereas **`0x08` stitches it to another
+object** (object<->object, traversed via a link only) - conflating the two caused the
+terrain->object "teleport" fixed during the navmesh-viz work (§8).
 
 `Region::getHeightAtPoint` (navmesh.cpp:421) does **bilinear interpolation** within a
 20-unit tile, with an ice-surface upward override:
@@ -170,7 +176,12 @@ triangles; `getSuccessorStateThroughEdgeIfPossible` decides crossing + resulting
   edge -> pass through staying on terrain (**walking under** the bridge); object external
   unblocked edge -> step **onto** the object, unless we're emerging from under it (detected
   by current-triangle-overlaps-object && neighbor-doesn't); terrain blocking -> no
-  successor (cliff/wall).
+  successor (cliff/wall). **Only `0x00` outline edges (object<->terrain stitch) are valid
+  step-on ramps; `0x08` outline edges (object<->object stitch) are made blocking from terrain
+  and are crossed only object-to-object via their link** - see §8 (the navmesh-viz `0x08`
+  fix). Also note: interior **blocked terrain has no constraint edge** (only the per-triangle
+  `blockedTerrainTriangles_` flag), so the on-terrain marker-0 pass-through path is now also
+  guarded against entering a blocked-terrain triangle.
 - **Links** = the explicit stairway mechanism: a precomputed triangle patch
   (`linkDataMap_[id].accessibleTriangleIndices`) bridging two objects
   (`globalObjectLinks_[id]`). While traversing, cross any edge staying inside the patch;
@@ -218,9 +229,25 @@ beneath it - disambiguated solely by the state's layer.
   "impossible for both objects to be on this triangle" `throw`, and to yield no successor
   (instead of aborting the search) when the link is unknown in the current region. Validated
   via `tools/navmesh_viz` on macOS; **not yet** regression-tested on the Linux `bot`.
+- **Object `0x08` outline edges were used as terrain on-ramps (fixed, navmesh-viz work).**
+  In `navmeshTriangulation.cpp` both `0x00` and `0x08` outline edges were treated as
+  non-blocking "way onto the object", so a search on terrain could step straight up onto a
+  raised object floor at an object<->object (`0x08`) seam. Now `0x08` edges get
+  `kGlobal | kBlocking` (blocking from terrain; the object<->object link still works because
+  link handling runs before the blocking check on the object side); only `0x00` edges stitch
+  terrain->object. Caveat: confirm this does not over-block object<->object connections whose
+  link data is missing (the "link data does not actually exist" branch). macOS/viz-validated;
+  **not yet** Linux `bot`-tested.
+- **On-terrain walks could cross blocked terrain (fixed, navmesh-viz work).** Interior blocked
+  terrain has no constraint edge (only `blockedTerrainTriangles_`), and `getSuccessors` checked
+  that flag only when leaving an object / at start+goal. A guard now drops any successor that
+  stays on terrain but enters a blocked-terrain triangle. macOS/viz-validated; **not yet**
+  Linux `bot`-tested.
 - **No-path = throw**: `findShortestPath` empty/throwing propagates as an exception; callers
   must handle "no path."
-- **Output waypoints have height ~0** - any 3D consumer must reconstruct surface height.
+- **Output waypoints have height ~0** - any 3D consumer must reconstruct surface height. The
+  Pathfinder result (`StraightPathSegment`) exposes only 2D points; the A* surface/layer state
+  is internal and not returned, so a 3D consumer must re-derive which surface each leg is on.
 
 ## 9. Prior art in this repo
 

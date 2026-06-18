@@ -116,12 +116,24 @@ bool writeObject(
     areaIds.push_back(i < resource.cellAreaIds.size() ? resource.cellAreaIds[i] : 0u);
   }
 
+  // Outline (perimeter) edges with their raw flag, for navmesh inspection.
+  // Flat triples: [srcVertexIndex, destVertexIndex, flag, ...].
+  std::vector<uint32_t> outlineEdges;
+  outlineEdges.reserve(resource.outlineEdges.size() * 3);
+  for (const auto &edge : resource.outlineEdges) {
+    outlineEdges.push_back(static_cast<uint32_t>(edge.srcVertex));
+    outlineEdges.push_back(static_cast<uint32_t>(edge.destVertex));
+    outlineEdges.push_back(static_cast<uint32_t>(edge.flag));
+  }
+
   out << "{\"instanceId\":" << instanceId << ",\"positions\":";
   writeFloatArray(out, positions);
   out << ",\"indices\":";
   writeUintArray(out, indices);
   out << ",\"areaIds\":";
   writeUintArray(out, areaIds);
+  out << ",\"outlineEdges\":";
+  writeUintArray(out, outlineEdges);
   out << '}';
   return true;
 }
