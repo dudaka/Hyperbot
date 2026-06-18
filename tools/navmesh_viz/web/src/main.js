@@ -4,6 +4,19 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 const statusEl = document.getElementById('status');
 const setStatus = (text) => { statusEl.textContent = text; };
 
+// Mirror an interaction to the console and the on-screen log panel.
+const logEl = document.getElementById('log');
+function logLine(cls, label, data) {
+  console.log(label, data);
+  const entry = document.createElement('div');
+  entry.className = `entry ${cls}`;
+  entry.textContent = `${label} ${JSON.stringify(data)}`;
+  logEl.prepend(entry);
+}
+document.getElementById('clearLog').addEventListener('click', () => {
+  logEl.replaceChildren();
+});
+
 // --- Renderer / scene / camera ------------------------------------------------
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(window.devicePixelRatio);
@@ -29,7 +42,7 @@ scene.add(sun);
 const world = new THREE.Group();
 scene.add(world);
 let originOffset = new THREE.Vector3();
-let currentRadius = 1;
+let currentRadius = 0;
 
 // --- Pickable surfaces + markers ---------------------------------------------
 const pickables = [];
@@ -177,7 +190,13 @@ async function queryPath() {
   const [s, g] = endpoints.map((e) => e.vec);
   setStatus('Querying path...');
   const url = `/path?sx=${s.x}&sy=${s.y}&sz=${s.z}&gx=${g.x}&gy=${g.y}&gz=${g.z}`;
+  logLine('req', '[path] request', {
+    S: { x: s.x, y: s.y, z: s.z },
+    G: { x: g.x, y: g.y, z: g.z },
+    url,
+  });
   const res = await (await fetch(url)).json();
+  logLine(res.ok ? 'res-ok' : 'res-err', '[path] response', res);
   if (!res.ok) {
     setStatus(`No path: ${res.error}`);
     return;
@@ -202,11 +221,18 @@ function onPick(clientX, clientY) {
   if (hits.length === 0) return;
 
   // Hit point is in world space; convert back to the absolute frame.
-  const absolute = hits[0].point.clone().add(originOffset);
+  const hit = hits[0];
+  const absolute = hit.point.clone().add(originOffset);
   if (endpoints.length >= 2) clearSelection();
   const kind = endpoints.length === 0 ? 'S' : 'G';
   endpoints.push({ vec: absolute, kind });
   addMarker(absolute, kind);
+  logLine('pick', `[pick] ${kind}`, {
+    surface: hit.object.userData.kind,
+    absolute: { x: absolute.x, y: absolute.y, z: absolute.z },
+    worldPoint: { x: hit.point.x, y: hit.point.y, z: hit.point.z },
+    ndc: { x: ndc.x, y: ndc.y },
+  });
   setStatus(`${kind} = (${absolute.x.toFixed(0)}, ${absolute.y.toFixed(0)}, ` +
             `${absolute.z.toFixed(0)})`);
   if (endpoints.length === 2) queryPath();

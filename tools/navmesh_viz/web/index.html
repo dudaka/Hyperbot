@@ -25,6 +25,16 @@
       #scope { margin-top: 10px; display: flex; gap: 6px; }
       #scope button.active { background: #2d6cff; border-color: #2d6cff; color: #fff; }
       #status { margin-top: 8px; color: #9aa6b8; }
+      #log {
+        margin-top: 8px; max-height: 40vh; overflow-y: auto;
+        border-top: 1px solid #2a3342; padding-top: 8px;
+        font-size: 12px; white-space: pre-wrap; word-break: break-all;
+      }
+      #log .entry { margin-bottom: 6px; color: #b6c0d0; }
+      #log .pick { color: #7fd1ff; }
+      #log .req { color: #ffe14d; }
+      #log .res-ok { color: #5fe08a; }
+      #log .res-err { color: #ff7b7b; }
     </style>
   </head>
   <body>
@@ -42,6 +52,8 @@
       </div>
       <div id="status">Loading geometry...</div>
       <button id="reset">Reset S/G</button>
+      <button id="clearLog">Clear log</button>
+      <div id="log"></div>
     </div>
     <script type="module" src="/src/main.js"></script>
   </body>

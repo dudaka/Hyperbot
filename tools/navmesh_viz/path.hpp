@@ -17,8 +17,10 @@ struct PathResult {
 };
 
 // Runs Polyanya between two absolute-frame points and returns the path as
-// absolute waypoints, with each waypoint's height reconstructed from the
-// terrain so the line follows the surface (waypoints are otherwise 2D).
+// absolute waypoints. Each waypoint's height is reconstructed by choosing one
+// stacked surface per waypoint (terrain or an object floor) so total vertical
+// movement is minimized, anchored to the clicked start/goal heights - so the
+// path climbs onto a structure and follows it to the goal floor.
 PathResult findPath(
     const sro::navmesh::Navmesh &navmesh,
     const sro::navmesh::triangulation::NavmeshTriangulation &triangulation,

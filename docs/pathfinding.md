@@ -211,7 +211,13 @@ beneath it - disambiguated solely by the state's layer.
 - **Arc -> midpoint approximation** can produce a slightly wrong path.
 - **"No return through entry edge"** shortcut breaks the Takla bridge case (commented TODO).
 - **Object-overlap link inconsistencies** are handled defensively ("won't work correctly if
-  the objects overlap").
+  the objects overlap"). A **cross-region** link is triangulated inside the single region that
+  absorbs both linked objects, so the two objects genuinely overlap on the shared exit
+  triangle. `getSuccessors` was updated (during the navmesh-viz work) to pick the link-exit
+  object from the *exit edge's own link side* (`isOnSourceSideOfLink`) instead of the old
+  "impossible for both objects to be on this triangle" `throw`, and to yield no successor
+  (instead of aborting the search) when the link is unknown in the current region. Validated
+  via `tools/navmesh_viz` on macOS; **not yet** regression-tested on the Linux `bot`.
 - **No-path = throw**: `findShortestPath` empty/throwing propagates as an exception; callers
   must handle "no path."
 - **Output waypoints have height ~0** - any 3D consumer must reconstruct surface height.

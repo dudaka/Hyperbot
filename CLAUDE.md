@@ -11,8 +11,11 @@ pybind11; monitoring is a Qt6 desktop app.
 A **three.js visualization** of the navmesh (terrain + BMS objects) with interactive
 S->G path queries, using Hyperbot's **pathfinding/navigation as the backend**. The first
 cut is **implemented and runnable** in `tools/navmesh_viz/` (standalone C++ HTTP service +
-a `web/` three.js client; region scopes 1x1/3x3/5x5 centered on region `5c87`). Current
-task: **test the web UI and GUI path queries**, then scale up.
+a `web/` three.js client; region scopes 1x1/3x3/5x5 centered on region `5c87`). One
+testing/hardening pass is done: it added an on-screen query log panel and fixed three
+issues - layer-aware path height (DP), long-segment densification, and a cross-region
+stairway-link pathfinding bug in `silkroad_lib`. Current task: **keep testing the GUI
+path queries** (stacked-surface / cross-region / failure cases), then scale up.
 
 Status, how-to-run, key findings, gaps, and next steps: `docs/threejs-visualization-plan.md`.
 Tool usage: `tools/navmesh_viz/README.md`. Backend authority: `docs/pathfinding.md`.

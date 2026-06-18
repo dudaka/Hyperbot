@@ -33,3 +33,4 @@ venv/
 runs/
 rl_debugging/
 sro-data/
+.playwright-mcp/

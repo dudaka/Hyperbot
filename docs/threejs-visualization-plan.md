@@ -1,11 +1,14 @@
 # three.js Navmesh Visualization - Status & Handoff
 
-**Status: first cut IMPLEMENTED and verified on macOS.** Region scopes 1x1 / 3x3 / 5x5
-(center region `5c87` = Hotan, plus a ring) render in 3D; interactive S->G path queries
-work against Hyperbot's own pathfinder. The code lives in **`tools/navmesh_viz/`**
-(standalone C++ backend + `web/` three.js client). This file is the handoff for the next
-session, whose job is to **test the web UI and the GUI path queries** and then push the
-scaling/quality work in "Next steps".
+**Status: first cut IMPLEMENTED + one testing/hardening pass done, on macOS.** Region scopes
+1x1 / 3x3 / 5x5 (center region `5c87` = Hotan, plus a ring) render in 3D; interactive S->G
+path queries work against Hyperbot's own pathfinder. The code lives in **`tools/navmesh_viz/`**
+(standalone C++ backend + `web/` three.js client). The first testing pass found and **fixed
+three issues** (layer-aware height reconstruction, long-segment densification, and a
+cross-region stairway-link pathfinding bug in `silkroad_lib`) - see "Fixed this testing
+pass". This file is the handoff for the next session, whose job is to **keep testing the GUI
+path queries** (more stacked-surface / cross-region / failure cases) and then push the
+scaling work in "Next steps".
 
 Read [pathfinding.md](pathfinding.md) for the backend authority. Tool usage lives in
 `tools/navmesh_viz/README.md`.
@@ -30,7 +33,8 @@ Silkroad.
   package manager (e.g. Homebrew). Builds on macOS (and should on Linux).
 - `main.cpp` - load + two modes: `dump` (write geometry JSON + a sample path query) and
   `serve` (HTTP). `geometry.cpp` - terrain + BMS extraction to JSON. `path.cpp` - Polyanya
-  query + per-waypoint height reconstruction. `server.cpp` - cpp-httplib endpoints.
+  query, segment densification, and a minimal-vertical-movement height DP over the stacked
+  surfaces (see "Fixed this testing pass"). `server.cpp` - cpp-httplib endpoints.
 - Data source: the **already-extracted** `sro-data/` loose files (`Data/`, `Map/`,
   `Media/`); only `Data/navmesh/*` is used. The navmesh is parsed by driving
   `NavmeshParser` directly.
@@ -51,6 +55,11 @@ Silkroad.
 - S/G picking: `THREE.Raycaster` against terrain + objects; first click = S (green), second
   = G (red), third resets. The **clicked surface Y** is sent through and selects the layer.
 - On S+G, calls `/path` and draws the waypoints as a tube hugging the surface.
+- **On-screen log panel + console logging** (added this testing pass): every pick logs its
+  surface kind, full-precision absolute/world coords, and NDC; every `/path` call logs the
+  request (S, G, URL) and the raw response. A "Clear log" button empties the panel. Invaluable
+  for capturing the exact input data behind a misbehaving query.
+- **Default scope is 1x1** (lightest load); switch to 3x3 / 5x5 as needed.
 - Vite proxies `/geometry`, `/path`, `/info` to `127.0.0.1:5577`.
 
 ## How to run / test
@@ -66,7 +75,8 @@ cmake --build build --target navmesh_viz
 cd web && npm install && npm run dev
 ```
 
-Open **<http://localhost:5173/>** (use `localhost`, not `127.0.0.1` - Vite binds IPv6).
+Open **<http://localhost:5173/>** (or the next free port Vite prints, e.g. `5174`, if 5173
+is taken; use `localhost`, not `127.0.0.1` - Vite binds IPv6).
 Drag to orbit; click S then G; use the scope buttons. Quick backend checks:
 `curl localhost:5577/info`, `curl 'localhost:5577/geometry?r=0'`,
 `curl 'localhost:5577/path?sx=13920&sy=243.6&sz=54240&gx=14880&gy=244&gz=55200'`.
@@ -103,38 +113,82 @@ Drag to orbit; click S then G; use the scope buttons. Quick backend checks:
 - Pathfinder's `findShortestPath` returns `PathfindingResult` owning `unique_ptr` segments;
   raw segment pointers must be consumed **while it is alive** (an earlier use-after-free
   produced `(0,0)` waypoints).
+- **Polyanya emits only corner waypoints, with height ~0** - it returns `StraightPathSegment`s
+  (2D `x`,`z`) between turns, nothing in between. A single straight segment can span terrain
+  whose height swings widely, so any 3D consumer must densify + reconstruct height (we do).
+- **Cross-region stairway links are triangulated inside ONE region.** When a link joins
+  objects in two regions, the region that "absorbs" both objects holds the whole link (both
+  src + dest edges, and the two objects overlap on the shared exit triangle); the other region
+  may have an empty link map. The stitched region border can still let the A* search step into
+  that other region mid-link. This drove the link bug fixed this pass.
 
-## Known gaps / issues
+## Fixed this testing pass
 
-- **Path height reconstruction is terrain-only.** Waypoints on an object floor fall back to
-  terrain/start height (`path.cpp` `reconstructHeight`), so multi-floor routes don't yet
-  hug the floor. Needs layer-aware reconstruction (carry the surface, or use
-  nearest-altitude continuity from S).
+- **Layer-aware path height (minimal-vertical-movement DP).** `path.cpp` `reconstructHeights`
+  enumerates every stacked surface at each waypoint's column (terrain + each object
+  `(instance, area)` floor via `ObjectResource::getHeight`), then picks one surface per
+  waypoint so total `|dY|` along the path is minimized, anchored to the clicked start/goal
+  heights. Beats a greedy nearest-altitude walk (which stays stuck on terrain and never
+  climbs). Verified: a goal on a raised wall (304) now climbs terrain -> object floor -> 304
+  (greedy left it terrain-snapped at 243).
+- **Segment densification.** Polyanya emits only corner waypoints, so one straight segment can
+  span widely-varying height; sampling height only at the corners drew a chord that speared
+  through the ground (an S->G segment dropping 244->119 cut diagonally through everything).
+  `path.cpp` now subdivides each straight segment into ~30-unit steps before the height DP, so
+  the path hugs the surface (that case now descends 244->226->...->119 over ~270 units; this
+  also fixed a start-height-off-by-14 artifact, since the DP no longer lowers the start to
+  cheat one big jump).
+- **Cross-region stairway-link traversal (core `silkroad_lib`).** Picks whose route crossed a
+  link joining objects in two regions could `throw` out of `getSuccessors` and abort the whole
+  A* search (`"...both objects to be on this triangle"`, `"We have no list of triangles for
+  this link"`). Root cause (proven via diagnostics, NOT a partial-load artifact): see the
+  cross-region-link finding above. Fix in `singleRegionNavmeshTriangulation.cpp`
+  `getSuccessors`: choose the link-exit object from the *exit edge's own link side*
+  (`isOnSourceSideOfLink`) instead of guessing from which objects sit on the triangle; and when
+  the link is unknown in the current region, yield no successor instead of aborting. Validated
+  on macOS via the viz (runs this exact code): failing picks no longer crash, link exits
+  succeed, regressions hold, a 400-query random sweep triggers none of the link throws. Some
+  picks now correctly report "No path" (verified genuinely unreachable). **Pending a Linux
+  `bot` gameplay-regression pass** since it changes shared pathfinding.
+
+## Known gaps / issues (open)
+
+- **Path mount-step is a single straight segment.** Reconstructed waypoints are surface
+  *samples*, not the true mesh, so the one segment where a path mounts a structure (stairs /
+  ramp) is still a straight climb - the ramp geometry isn't represented. Minor / visual.
 - **"No path" is often correct, not a bug** - two picks separated by walls/cliffs/water
-  legitimately have no route. Some Pathfinder edge cases also return clean errors
-  ("impossible for both objects to be on this triangle", "invalid point"); these are
-  surfaced, not crashes.
+  legitimately have no route. Some Pathfinder edge cases also surface as clean errors
+  (`"invalid point"`, plus two unrelated Polyanya-internal ones in `third_party/pathfinder`:
+  `"createCircleConsciousLine..."`, `"i1=inf..."`) - rare, gracefully surfaced, out of scope
+  (vendored lib).
 - **Walkable mask** (`terrain.walkable`, 96x96 per region) is sent but not rendered as an
   overlay yet.
 - **Debug overlays** (triangulation triangles / constraint edges) are not implemented.
 - **Per-object draw calls don't scale**: ~250 meshes at R=2 (~31 FPS headless, 12.5 MB
   geometry). Fine for 1x1/3x3/5x5; not for the full ~4021-region map.
-- The `silkroad_lib` changes (loose reader, allow-list) are additive and compile on macOS
-  via `navmesh_viz`, but were **not** built against the Linux `bot` target - verify there
-  before relying on the bot.
+- **`silkroad_lib` changes are additive but macOS-only so far.** Three changes total:
+  loose-directory `Pk2ReaderModern` mode, `NavmeshParser::setRegionAllowList`, and the
+  cross-region link-traversal fix in `getSuccessors`. All compile + run via `navmesh_viz` on
+  macOS but were **not** built/tested against the Linux `bot` target - verify there before
+  relying on the bot (the link fix changes shared pathfinding behavior).
 
 ## Next steps
 
-1. **Test the UI/GUI queries thoroughly** (current task): scope switching, picking on
+1. **Keep testing the UI/GUI queries** (active task): more scope switching, picking on
    stacked surfaces (walls/structures vs ground), cross-region paths, and failure messaging.
-2. **Layer-aware path height** so multi-floor routes follow the correct surface.
+   Use the on-screen log panel to capture the exact S/G/URL/response behind any oddity. The
+   three issues already fixed (height, densification, links) were all found this way -
+   expect to find more (e.g. the mount-step residual, or new Polyanya edge cases).
+2. ~~**Layer-aware path height** so multi-floor routes follow the correct surface.~~ Done
+   (DP + densification in `path.cpp`); only the 2D-waypoint mount step remains.
 3. **Optional overlays**: walkable mask coloring; triangulation/constraint-edge debug view.
 4. **Scale toward the full map** (the ~4021-region roadmap): merge each region to a few
    draw calls; glTF/glb (or binary) per-region transport with view-driven streaming + LRU
    eviction; LOD/frustum culling; cull empty/water regions; a 2D minimap for overview.
    Pathfinding is already global server-side (one absolute plane spans all loaded regions),
    so only geometry needs streaming.
-5. Verify the `silkroad_lib` changes on the Linux `bot` build.
+5. **Verify the `silkroad_lib` changes on the Linux `bot` build** - especially the
+   cross-region link-traversal fix, which changes shared pathfinding behavior.
 
 ## Backend entry points (authority: pathfinding.md)
 

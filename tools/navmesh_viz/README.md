@@ -46,10 +46,15 @@ npm install
 npm run dev   # Vite proxies /geometry, /path, /info to 127.0.0.1:5577
 ```
 
-Open **http://localhost:5173/** (use `localhost`, not `127.0.0.1` - Vite binds
-IPv6). Use the 1x1 / 3x3 / 5x5 buttons to switch region scope. Drag to orbit;
-click to place S then G - the clicked surface height selects the layer, and the
-returned path is drawn following the surfaces. "No path" is expected when the two
-points are separated by walls / cliffs / water.
+Open **http://localhost:5173/** (or the next free port Vite prints, e.g. `5174`;
+use `localhost`, not `127.0.0.1` - Vite binds IPv6). Scope defaults to **1x1**;
+use the 1x1 / 3x3 / 5x5 buttons to switch. Drag to orbit; click to place S then
+G - the clicked surface height selects the layer, and the returned path is drawn
+following the surfaces. "No path" is expected when the two points are separated
+by walls / cliffs / water.
+
+An **on-screen log panel** (and the browser console) records every pick (surface,
+absolute coords) and every `/path` request + response - use it to capture the
+exact input behind a misbehaving query. "Clear log" empties it.
 
 See `../../docs/threejs-visualization-plan.md` for status, findings, and gaps.
