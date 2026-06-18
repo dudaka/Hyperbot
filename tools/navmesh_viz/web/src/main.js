@@ -224,6 +224,28 @@ async function loadGeometry(radius) {
 }
 
 // --- S/G picking + path query ------------------------------------------------
+// Character collision radius used by the pathfinder backend, reported by the
+// server (GET /info). Drawn as a flat ring at each endpoint so its scale is
+// visible against the navmesh. The 3.14 default is only a fallback until /info
+// loads.
+let agentRadius = 3.14;
+
+function agentRadiusRing(absoluteVec, color) {
+  const segments = 64;
+  const pts = [];
+  for (let i = 0; i <= segments; i++) {
+    const a = (i / segments) * Math.PI * 2;
+    pts.push(new THREE.Vector3(Math.cos(a) * agentRadius, 0, Math.sin(a) * agentRadius));
+  }
+  const ring = new THREE.Line(
+    new THREE.BufferGeometry().setFromPoints(pts),
+    new THREE.LineBasicMaterial({ color }));
+  ring.position.copy(absoluteVec);
+  ring.renderOrder = 999;
+  ring.material.depthTest = false;
+  return ring;
+}
+
 function addMarker(absoluteVec, kind) {
   const color = kind === 'S' ? 0x5fe08a : 0xff7b7b;
   const marker = new THREE.Mesh(
@@ -231,6 +253,7 @@ function addMarker(absoluteVec, kind) {
     new THREE.MeshBasicMaterial({ color }));
   marker.position.copy(absoluteVec);
   markerGroup.add(marker);
+  markerGroup.add(agentRadiusRing(absoluteVec, color));
 }
 
 function clearSelection() {
@@ -399,8 +422,10 @@ async function init() {
   // Disable scopes the server didn't load (it caps at its startup radius).
   let maxRadius = 2;
   try {
-    maxRadius = (await (await fetch('/info')).json()).maxRadius;
-  } catch { /* keep default */ }
+    const info = await (await fetch('/info')).json();
+    maxRadius = info.maxRadius;
+    if (typeof info.agentRadius === 'number') agentRadius = info.agentRadius;
+  } catch { /* keep defaults */ }
   for (const btn of scopeButtons) {
     btn.disabled = Number(btn.dataset.radius) > maxRadius;
   }

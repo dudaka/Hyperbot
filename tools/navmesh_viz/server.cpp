@@ -80,9 +80,11 @@ void runServer(
     r = std::max(0, std::min(maxRadius, r));
     res.set_content(geometryByRadius[r], "application/json");
   });
-  // Report the max ring radius the client can request.
+  // Report the max ring radius the client can request, plus the pathfinder's
+  // agent (collision) radius so the client can draw the footprint to scale.
   server.Get("/info", [&](const httplib::Request &, httplib::Response &res) {
-    res.set_content("{\"maxRadius\":" + std::to_string(maxRadius) + "}",
+    res.set_content("{\"maxRadius\":" + std::to_string(maxRadius) +
+                        ",\"agentRadius\":" + std::to_string(kAgentRadius) + "}",
                     "application/json");
   });
 

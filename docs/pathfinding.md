@@ -182,10 +182,17 @@ triangles; `getSuccessorStateThroughEdgeIfPossible` decides crossing + resulting
   fix). Also note: interior **blocked terrain has no constraint edge** (only the per-triangle
   `blockedTerrainTriangles_` flag), so the on-terrain marker-0 pass-through path is now also
   guarded against entering a blocked-terrain triangle.
-- **Links** = the explicit stairway mechanism: a precomputed triangle patch
+- **Links** = the explicit object<->object mechanism: a precomputed triangle patch
   (`linkDataMap_[id].accessibleTriangleIndices`) bridging two objects
   (`globalObjectLinks_[id]`). While traversing, cross any edge staying inside the patch;
-  exit on the matching link edge onto the other object.
+  exit on the matching link edge onto the other object. **Coincident seams (navmesh-viz
+  pass 3):** when a link's two object edges are near-coincident (coplanar floors abutting -
+  `LinkData::edgesCoincident`, set in `buildLinkData` when both endpoint gaps are
+  `< kCoincidentSeamEpsilon = 8.0`), the patch between them is a degenerate sliver that
+  connects one object at only one end. `getSuccessors` then crosses such a seam **directly**
+  onto the other object wherever it sits on the far triangle (like a `0x00` on-ramp), so the
+  search takes the straight crossing instead of funneling through the corner. Only
+  separated-edge links (real bridges) still traverse the corridor. See §8.
 
 **The bridge duality** is the proof the 2.5D flattening works: the same physical outline
 edge is *blocking* when you're on the bridge and *pass-through* when you're on the terrain
@@ -243,6 +250,28 @@ beneath it - disambiguated solely by the state's layer.
   that flag only when leaving an object / at start+goal. A guard now drops any successor that
   stays on terrain but enters a blocked-terrain triangle. macOS/viz-validated; **not yet**
   Linux `bot`-tested.
+- **Object<->object `0x08` coincident seams crossed directly (fixed, navmesh-viz pass 3).**
+  When two coplanar object floors abut, their `0x08` link's two edges are near-coincident and
+  the triangulated link patch between them is a degenerate sliver that connects one object at
+  only one end - so a search funnels through that corner (a ~60-unit detour) and, in the dense
+  geometry, can trip a Polyanya numeric degeneracy that aborts the search. `buildLinkData` now
+  flags `edgesCoincident` (endpoint gap `< kCoincidentSeamEpsilon = 8.0`), and `getSuccessors`
+  crosses a coincident seam directly object-to-object (like a `0x00` on-ramp), bypassing the
+  corridor; separated-edge links keep the corridor. **Heuristic risk:** a genuine bridge whose
+  facing edges sit < 8 units apart would be misclassified - validate against the bandit/jangan
+  fortress bridges. Underlying cause unfixed: `accessibleTriangleIndices` omits tiny triangles
+  below the `trianglesOverlap` epsilon (the "Big TODO" in `buildLinkData`). macOS/viz-validated;
+  **not yet** Linux `bot`-tested.
+- **Polyanya "i1/i2 is inf" degeneracy guarded in the vendored lib (navmesh-viz pass 3).** The
+  interval-projection "parallel edges closer than the agent radius" case in
+  `third_party/Pathfinder/pathfinder.h` (`doesRightIntervalIntersectWithLeftOfSuccessorEdge`
+  and its mirror) **threw**, aborting the whole search - masked as "No path" under the 150ms
+  timeout. The two throw sites now fall back to the library's own "skip this successor unless we
+  can turn around the constraint" logic (regression-safe: only previously-crashing inputs
+  change). This **modifies `third_party/`** - an authorized exception to the usual rule - kept
+  as `tools/navmesh_viz/patches/pathfinder-polyanya-degeneracy-guard.patch`, **not** a submodule
+  bump (a fresh `git submodule update` reverts it). Now optional: the coincident-seam fix
+  avoids the degenerate corridor, so the case is no longer reached for known data.
 - **No-path = throw**: `findShortestPath` empty/throwing propagates as an exception; callers
   must handle "no path."
 - **Output waypoints have height ~0** - any 3D consumer must reconstruct surface height. The

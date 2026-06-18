@@ -38,7 +38,8 @@ Endpoints (CORS-enabled):
   also carries `outlineEdges` (flat `[srcVertexIndex, destVertexIndex, flag]` triples) for
   edge inspection - flag `0x00` = object<->terrain stitch, `0x08` = object<->object stitch.
 - `GET /path?sx&sy&sz&gx&gy&gz` - Polyanya path between two absolute-frame points.
-- `GET /info` - `{"maxRadius":N}`, the largest ring the client may request.
+- `GET /info` - `{"maxRadius":N,"agentRadius":R}`: the largest ring the client may request,
+  and the pathfinder's agent (collision) radius so the client can draw the footprint to scale.
 
 ## Web client
 
@@ -65,6 +66,8 @@ UI extras:
   three.js); still a consistent orientation reference.
 - **Stitch-edge toggle** (HUD checkbox, off by default) - overlays object outline edges:
   cyan `0x00` (object<->terrain) and magenta `0x08` (object<->object), always-on-top.
+- **Agent-radius rings** - each S/G marker draws a flat ring of radius = the backend's agent
+  radius (from `/info`), so the character collision footprint is visible to scale.
 - **Debug hooks** (browser console) - `window.__vizQuery(s, g)` runs a path query from
   absolute-coord objects `{x,y,z}`; `window.__vizFocus(target, radius, azDeg, elDeg)` aims
   the camera. Used for automated/visual testing.

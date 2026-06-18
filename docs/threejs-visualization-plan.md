@@ -1,13 +1,13 @@
 # three.js Navmesh Visualization - Status & Handoff
 
-**Status: first cut IMPLEMENTED + two testing/hardening passes done, on macOS.** Region
+**Status: first cut IMPLEMENTED + three testing/hardening passes done, on macOS.** Region
 scopes 1x1 / 3x3 / 5x5 (center region `5c87` = Hotan, plus a ring) render in 3D; interactive
 S->G path queries work against Hyperbot's own pathfinder. The code lives in
 **`tools/navmesh_viz/`** (standalone C++ backend + `web/` three.js client).
 
 - **Pass 1** fixed three issues (layer-aware height reconstruction, long-segment
   densification, and a cross-region stairway-link bug in `silkroad_lib`).
-- **Pass 2 (this session)** root-caused and fixed the **object-stitch vertical "teleport"**:
+- **Pass 2** root-caused and fixed the **object-stitch vertical "teleport"**:
   stacked terrace->rampart queries jumped ~47-145 units straight up. Cause: in
   `navmeshTriangulation.cpp` both `0x00` and `0x08` object outline edges were treated as
   "the way onto the object", so `0x08` (object<->object) seams were used as terrain->object
@@ -15,11 +15,23 @@ S->G path queries work against Hyperbot's own pathfinder. The code lives in
   stitches terrain->object. Also added a blocked-terrain-walk guard, reworked the tool's
   height DP, and added a **compass** + **stitch-edge toggle** + debug hooks. See "Fixed -
   pass 2".
+- **Pass 3 (this session)** root-caused and fixed object<->object (`0x08`) **seam crossing**
+  plus a Polyanya degeneracy. Where two coplanar object floors abut, their two near-coincident
+  link edges form a degenerate sliver "corridor" that (a) connected object A to it at only one
+  end - forcing a ~60-unit detour to that corner - and (b) was slow / tripped an unhandled
+  Polyanya `"i1/i2 is inf"` degeneracy that aborted the whole search (masked as "No path" by
+  the 150ms timeout). Fix: coincident-edge links are now crossed **directly** object-to-object
+  wherever the other object is present on the far triangle (like a `0x00` on-ramp), bypassing
+  the corridor; the degeneracy is also guarded in `third_party/Pathfinder` (authorized, kept as
+  an in-repo patch). This subsumed an earlier radius=0.5 workaround - the viz is back on the
+  bot's agent radius 3.14. Added an agent-radius overlay (rings at S/G, read from `/info`). See
+  "Fixed - pass 3".
 
-This file is the handoff for the next session, whose job is to **keep testing the GUI path
-queries** (more stacked-surface / cross-region / failure cases), run the **Linux `bot`
-regression** for the shared `silkroad_lib` changes (top open risk), then push the scaling
-work in "Next steps".
+This file is the handoff for the next session, whose job is to **resume testing the GUI path
+queries** (stacked-surface / cross-region / failure + the now-fixed `0x08` seam cases),
+**validate the `kCoincidentSeamEpsilon=8.0` heuristic against real fortress bridges**, run the
+**Linux `bot` regression** for the shared `silkroad_lib` changes (top open risk), consider
+upstreaming the Pathfinder patch, then push the scaling work in "Next steps".
 
 Read [pathfinding.md](pathfinding.md) for the backend authority. Tool usage lives in
 `tools/navmesh_viz/README.md`.
@@ -56,7 +68,9 @@ Silkroad.
   per radius, so the client can switch scope with no reload.
 - Endpoints (CORS-enabled, default port 5577): `GET /geometry?r=N` (cached region set for
   ring N), `GET /path?sx&sy&sz&gx&gy&gz` (absolute coords -> waypoints), `GET /info`
-  (`{"maxRadius":N}`).
+  (`{"maxRadius":N,"agentRadius":R}` - `agentRadius` = the pathfinder's collision radius,
+  added pass 3 so the client can draw the footprint to scale; `kAgentRadius` lives in
+  `path.hpp`).
 
 **Frontend - `tools/navmesh_viz/web/` (vanilla three.js + Vite):**
 
@@ -79,12 +93,18 @@ Silkroad.
 - **Debug hooks** (added pass 2, for automated/visual testing): `window.__vizQuery(s, g)`
   places S/G from absolute coords and runs the query; `window.__vizFocus(target, radius,
   azDeg, elDeg)` aims the camera. Used by Playwright; harmless in normal use.
+- **Agent-radius footprint** (added pass 3): each S/G marker also draws a flat ring of radius
+  = the backend's agent radius (fetched from `/info`, 3.14 fallback) so the character's
+  collision size is visible to scale against the navmesh. Note: the marker sphere is r=10, so
+  the 3.14 ring reads as ~1/3 of it.
 - **On-screen log panel + console logging** (added pass 1): every pick logs its
   surface kind, full-precision absolute/world coords, and NDC; every `/path` call logs the
   request (S, G, URL) and the raw response. A "Clear log" button empties the panel. Invaluable
   for capturing the exact input data behind a misbehaving query.
 - **Default scope is 1x1** (lightest load); switch to 3x3 / 5x5 as needed.
-- Vite proxies `/geometry`, `/path`, `/info` to `127.0.0.1:5577`.
+- Vite proxies `/geometry`, `/path`, `/info` to `127.0.0.1:5577` (`/info` was missing from
+  `vite.config.js` and only added pass 3 - before that the client's `/info` fetch silently
+  fell back to defaults, which happened to match).
 
 ## How to run / test
 
@@ -189,7 +209,7 @@ Drag to orbit; click S then G; use the scope buttons. Quick backend checks:
   picks now correctly report "No path" (verified genuinely unreachable). **Pending a Linux
   `bot` gameplay-regression pass** since it changes shared pathfinding.
 
-## Fixed - pass 2 (this session)
+## Fixed - pass 2
 
 - **Object-stitch vertical "teleport" (core `silkroad_lib`, the headline fix).** Stacked
   terrace->rampart picks jumped ~47-145 units straight up onto a raised object floor. Proven
@@ -218,6 +238,55 @@ Drag to orbit; click S then G; use the scope buttons. Quick backend checks:
   the web client adds the **compass**, the **stitch-edge toggle** (cyan `0x00` / magenta
   `0x08`), and the `__vizQuery`/`__vizFocus` debug hooks (all described in "What exists now").
 
+## Fixed - pass 3 (this session)
+
+- **Object<->object (`0x08`) coincident-seam crossing (core `silkroad_lib`, the headline
+  fix).** Two coplanar object floors that abut (e.g. two terrace slabs meeting) are stitched by
+  a `0x08` link whose two object outline edges are **near-coincident** (in Hotan: ~0.5-1.7
+  units apart, running along the same seam line). The link's traversable area is the triangulated
+  patch *between* those two edges; when they nearly coincide that patch is a degenerate sliver
+  wedge that touches object A at only one end. Symptoms: (1) crossing the seam funneled through
+  that one corner, so a straight S->G across the seam detoured ~60 units out and back; (2) the
+  same dense degenerate geometry tripped a Polyanya numeric degeneracy (below) and, before that
+  surfaced, simply timed out (150ms) as a spurious "No path". Proven root cause via diagnostics:
+  S/G resolved onto two different stacked objects (A=`1569139713`, B=`1585925122`), linked by
+  link id 1; the search *did* reach the goal triangle on B but the corridor entry was pinned to
+  the seam's west endpoint. **Fix** (`singleRegionNavmeshTriangulation.{hpp,cpp}`):
+  `buildLinkData` flags a link `edgesCoincident` when both endpoint gaps between its src/dest
+  edges are `< kCoincidentSeamEpsilon` (8.0 units); in `getSuccessors`, crossing a coincident
+  link edge now steps **directly onto the other object** wherever that object is present on the
+  far triangle (exactly like a `0x00` terrain<->object on-ramp), so Polyanya takes the straight
+  crossing instead of the corridor. Separated-edge links (real bridges) are not flagged and keep
+  the original corridor traversal. Verified via the viz at the bot's radius **3.14**: the
+  same-X probe stays at X=14584.5 end-to-end (no detour); the original ramp query's X-spread
+  dropped from ~60 to 0.8; height stays continuous across the seam (0.29-unit floor step, no
+  teleport); a 702-query grid spanning both objects + the seam is **702/702 ok, 0 crashes,
+  <=23ms**.
+- **Polyanya "i1/i2 is inf" degeneracy crash (`third_party/Pathfinder/pathfinder.h`).** In the
+  dense near-coincident seam geometry, the interval projection in
+  `doesRightIntervalIntersectWithLeftOfSuccessorEdge` / `...Left...Right...` hit an unhandled
+  "parallel edges closer than the agent radius" case and **threw**, aborting the whole search.
+  At radius 3.14 + 150ms this masked as "No path"; with a longer timeout it surfaced as the
+  exception. Fix: the two throw sites (`[0]` and its mirror `[2]`) now run the library's own
+  "reachable only if we can turn around the constraint, else skip this successor" logic instead
+  of throwing - regression-safe by construction (only previously-crashing inputs change). This
+  edits the vendored submodule (an **authorized exception** to "do not modify `third_party/`");
+  it is preserved as `tools/navmesh_viz/patches/pathfinder-polyanya-degeneracy-guard.patch`
+  (apply with `cd third_party/Pathfinder && git apply ../../tools/navmesh_viz/patches/...`).
+  **Now optional**: the seam fix bypasses the degenerate corridor, so this is no longer reached
+  for the known cases (702/702 pass even with the guard reverted) - kept as a safety net and an
+  upstream candidate.
+- **Agent radius is no longer a viz workaround.** During investigation, radius=0.5 "fixed" the
+  no-path by dodging the degeneracy; that was a workaround that diverged from the bot. With the
+  seam fix the viz is back on the bot's `kAgentRadius = 3.14` (now in `path.hpp`, exposed via
+  `/info`). Changing the viz radius is a one-line edit in `path.hpp`; it is intentionally
+  separate from the bot's `bot.cpp` value (both 3.14).
+- **Agent-radius overlay + `/info` plumbing.** `server.cpp` `/info` now reports `agentRadius`;
+  the web client draws a footprint ring at S/G from that value (proven backend-driven: setting
+  the backend to 9.0 made the rings render at radius 9.0). Also fixed a latent bug - `/info`
+  was never in the Vite proxy, so the client had always fallen back to its default
+  `maxRadius`/radius; `vite.config.js` now proxies `/info`.
+
 ## Known gaps / issues (open)
 
 - **Reconstructed waypoints are surface samples, not the true mesh.** With the pass-2 fix +
@@ -226,9 +295,23 @@ Drag to orbit; click S then G; use the scope buttons. Quick backend checks:
   expect minor visual stair-stepping. Mostly resolved; cosmetic.
 - **"No path" is often correct, not a bug** - two picks separated by walls/cliffs/water
   legitimately have no route. Some Pathfinder edge cases also surface as clean errors
-  (`"invalid point"`, plus two unrelated Polyanya-internal ones in `third_party/pathfinder`:
-  `"createCircleConsciousLine..."`, `"i1=inf..."`) - rare, gracefully surfaced, out of scope
-  (vendored lib).
+  (`"invalid point"`, `"createCircleConsciousLine..."`). The `"i1=inf..."` Polyanya degeneracy
+  that used to **abort** the whole search (and so masquerade as "No path") is now **guarded**
+  (pass 3 - see "Fixed - pass 3"; patched in the vendored lib). Watch for the un-guarded sibling
+  `createCircleConsciousLine` case during further testing.
+- **Coincident-seam heuristic is unvalidated against real bridges (pass-3 risk).**
+  `kCoincidentSeamEpsilon = 8.0` (units) classifies a `0x08` link as a direct crossable seam
+  vs a corridor bridge by its src/dest edge-endpoint gap. Validated only on Hotan's stitches
+  (gaps ~0.5-1.7) - **not** against genuine bridge links (the bandit/jangan fortress bridges
+  the code's own sanity checks mention). If a real bridge's facing edges sit < 8 units apart it
+  would be misclassified coincident and crossed directly (wrong). Validate before scaling; the
+  threshold may need to also consider height delta.
+- **Underlying causes still present, only bypassed.** The seam corridor is degenerate because
+  (a) `linkDataMap_[id].accessibleTriangleIndices` omits tiny triangles below the
+  `trianglesOverlap` epsilon (the code's own "Big TODO" in `buildLinkData`), and (b)
+  `objectDatasForTriangles_` overlap registration is incomplete where object floors stack. The
+  coincident-seam fix sidesteps both for abutting floors; the general triangle-overlap TODO is
+  unfixed.
 - **Walkable mask** (`terrain.walkable`, 96x96 per region) is sent but not rendered as an
   overlay yet.
 - **Debug overlays**: object outline `0x00`/`0x08` stitch edges now have a toggle (pass 2);
@@ -238,18 +321,25 @@ Drag to orbit; click S then G; use the scope buttons. Quick backend checks:
   (or N/S) against the known Hotan layout and flip one axis in `compassDirs` if needed.
 - **Per-object draw calls don't scale**: ~250 meshes at R=2 (~31 FPS headless, 12.5 MB
   geometry). Fine for 1x1/3x3/5x5; not for the full ~4021-region map.
-- **`silkroad_lib` changes are validated only via the viz on macOS (TOP OPEN RISK).** Five
-  navmesh-viz-driven changes have accumulated, three behavior-affecting:
+- **`silkroad_lib` changes are validated only via the viz on macOS (TOP OPEN RISK).** Six
+  navmesh-viz-driven changes have accumulated, four behavior-affecting:
   (1) loose-directory `Pk2ReaderModern` mode *(additive)*;
   (2) `NavmeshParser::setRegionAllowList` *(additive)*;
   (3) cross-region link-traversal fix in `getSuccessors` (pass 1);
   (4) the `0x08` object-stitch fix in `navmeshTriangulation.cpp` (pass 2);
-  (5) the blocked-terrain-walk guard in `singleRegionNavmeshTriangulation.cpp` (pass 2).
-  3-5 change **shared pathfinding behavior** used by the `bot`. All compile + run via
+  (5) the blocked-terrain-walk guard in `singleRegionNavmeshTriangulation.cpp` (pass 2);
+  (6) the coincident-seam direct-crossing in `singleRegionNavmeshTriangulation.cpp` (pass 3).
+  3-6 change **shared pathfinding behavior** used by the `bot`. All compile + run via
   `navmesh_viz` on macOS but were **not** built/tested against the Linux `bot` target. Run
-  the `bot` gameplay regression before relying on it. In particular, confirm (4) does not
+  the `bot` gameplay regression before relying on it. In particular: confirm (4) does not
   over-block legitimate object<->object connections whose link data is missing (a known
-  "link data does not actually exist" branch in `getSuccessors`).
+  "link data does not actually exist" branch in `getSuccessors`); and confirm (6) does not
+  open a crossing where the bot expected a corridor bridge (the epsilon risk above).
+- **`third_party/Pathfinder` is now also modified** (the pass-3 Polyanya degeneracy guard),
+  tracked as an **in-repo patch** (`tools/navmesh_viz/patches/`), **not** a submodule bump - so
+  a fresh `git submodule update` will revert it. Reapply the patch (or upstream it and bump the
+  submodule properly) on the Linux box before the `bot` regression. It is currently applied in
+  this working tree.
 - **Debug scaffolding kept intentionally** (for ongoing testing): `outlineEdges` in the
   `/geometry` JSON, and the `window.__vizQuery` / `window.__vizFocus` hooks in the web client.
   Strip them before any "production" packaging.
@@ -257,15 +347,23 @@ Drag to orbit; click S then G; use the scope buttons. Quick backend checks:
 ## Next steps
 
 1. **Verify the `silkroad_lib` changes on the Linux `bot` build (top priority / risk).**
-   Build the `bot` and run its gameplay regression against the shared-pathfinding changes -
-   especially the pass-2 `0x08` object-stitch fix and the blocked-terrain-walk guard, plus
-   the pass-1 cross-region link fix. Watch for paths that newly return "no path" where the bot
-   previously walked.
-2. **Keep testing the UI/GUI queries** (active task): more scope switching, picking on
-   stacked surfaces (walls/structures vs ground), cross-region paths, and failure messaging.
-   Use the on-screen log panel + the `0x00`/`0x08` toggle to capture the exact data behind any
-   oddity. Every fix so far was found this way - expect more (new Polyanya edge cases, other
-   fortresses/regions, 5x5 scope).
+   Reapply the Pathfinder patch (`tools/navmesh_viz/patches/`) first, then build the `bot` and
+   run its gameplay regression against the shared-pathfinding changes - the pass-3
+   coincident-seam direct-crossing and the pass-2 `0x08` object-stitch fix + blocked-terrain
+   guard, plus the pass-1 cross-region link fix. Watch for paths that newly return "no path"
+   where the bot previously walked, and for seam crossings opened where a corridor bridge was
+   intended.
+2. **Resume testing the UI/GUI queries** (active task): more scope switching, picking on
+   stacked surfaces (walls/structures vs ground), cross-region paths, the now-fixed `0x08`
+   seam cases, and failure messaging. Use the on-screen log panel + the `0x00`/`0x08` toggle to
+   capture the exact data behind any oddity. Every fix so far was found this way - expect more
+   (new Polyanya edge cases like the un-guarded `createCircleConsciousLine`, other
+   fortresses/regions, 5x5 scope). **Reproducible pass-3 seam test** (Hotan): objects
+   A=`1569139713` (Y~146.6) and B=`1585925122` (Y~146.3) meet along a `0x08` seam at absolute
+   Z~57297 spanning X 14523..14648 (link id 1). Straight crossing
+   `S(14584.5,146.64,57137) -> G(14584.5,146.348,57310)` must stay at X~14584.5 (no detour);
+   the up-the-ramp goal is `G(14583.7,177.6,57629)`. A grid of `/path` queries spanning both
+   objects + the seam is a good smoke test (702/702 ok at radius 3.14).
 3. **Confirm/verify the compass cardinals** against the known Hotan orientation; flip one axis
    in `compassDirs` if mirrored.
 4. **Optional overlays**: walkable-mask coloring; triangulation-triangle / full

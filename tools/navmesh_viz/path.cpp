@@ -45,8 +45,6 @@ namespace navmesh_viz {
 
 namespace {
 
-constexpr double kAgentRadius = 3.14;
-
 // Collects every stacked surface height (terrain plus each object floor) present
 // at the absolute (x, z) column, expressed as world Y. Empty if the region is
 // not loaded (e.g. just outside the cluster).

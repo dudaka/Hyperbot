@@ -1,0 +1,36 @@
+diff --git a/pathfinder.h b/pathfinder.h
+index c05ce7c..0746282 100644
+--- a/pathfinder.h
++++ b/pathfinder.h
+@@ -2501,7 +2501,15 @@ const Vector &successorEdgeRightPoint) const {
+           // Lines must be parallel but not overlapping.
+           // If the right of our interval and the endpoint of the successor edge are config_.agentRadius() apart, then there is no intersection with a constraint
+           if (math::lessThan(math::distance(*endOfIntervalForIntersectionTest, successorEdgeRightPoint), config_.agentRadius())) {
+-            throw std::runtime_error("i1="+std::to_string(i1)+" or i2="+std::to_string(i2)+" is inf [0]");
++            // Parallel and closer than the agent radius: the agent's disk overlaps
++            // the successor edge's constraint vertex, the same outcome as the explicit
++            // circle-intersection test below. The successor edge is reachable only if
++            // we can turn right around the constraint; otherwise skip this successor.
++            // (Previously this unhandled degenerate case threw "i1/i2 is inf [0]",
++            // aborting the whole search at near-coincident stacked-surface stitches.)
++            if (!(currentInterval.rightIndex && isAConstraintVertexForState(currentState, *currentInterval.rightIndex))) {
++              return true;
++            }
+           }
+         } else if (i1 == std::numeric_limits<double>::infinity() || i2 == std::numeric_limits<double>::infinity()) {
+           throw std::runtime_error("i1="+std::to_string(i1)+" or i2="+std::to_string(i2)+" is inf [1]");
+@@ -2609,7 +2617,13 @@ const Vector &successorEdgeRightPoint) const {
+           // If the left of our interval and the endpoint of the successor edge are config_.agentRadius() apart, then there is no intersection with a constraint
+           if (math::lessThan(math::distance(*endOfIntervalForIntersectionTest, successorEdgeLeftPoint), config_.agentRadius())) {
+             VLOG(1) << "End of left interval is not config_.agentRadius() away from the left of the successor edge";
+-            throw std::runtime_error("i1="+std::to_string(i1)+" or i2="+std::to_string(i2)+" is inf [2]");
++            // Mirror of the "[0]" case in doesRightIntervalIntersectWithLeftOfSuccessorEdge:
++            // parallel and within the agent radius means the agent's disk overlaps the
++            // successor edge's constraint vertex. Reachable only if we can turn left
++            // around the constraint; otherwise skip. (Previously threw "i1/i2 is inf [2]".)
++            if (!(currentInterval.leftIndex && isAConstraintVertexForState(currentState, *currentInterval.leftIndex))) {
++              return true;
++            }
+           }
+           // if (!(currentInterval.leftIndex && *currentInterval.leftIndex == successorEdgeLeftIndex)) {
+         } else if (i1 == std::numeric_limits<double>::infinity() || i2 == std::numeric_limits<double>::infinity()) {

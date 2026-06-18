@@ -193,6 +193,13 @@ void SingleRegionNavmeshTriangulation::buildLinkData() {
           linkDataMap_[linkId].accessibleTriangleIndices.insert(triangleIndex);
         }
       }
+
+      // Detect a (near) coincident seam: the two object edges run along the same
+      // line (a coplanar object-to-object stitch) rather than bridging a gap.
+      const double firstGap = pathfinder::math::distance(srcEdgeFirstVertex, destEdgeFirstVertex);
+      const double lastGap = pathfinder::math::distance(srcEdgeLastVertex, destEdgeLastVertex);
+      constexpr double kCoincidentSeamEpsilon = 8.0;
+      linkDataMap_[linkId].edgesCoincident = (firstGap < kCoincidentSeamEpsilon && lastGap < kCoincidentSeamEpsilon);
     }
   }
 }
@@ -392,6 +399,30 @@ absl::InlinedVector<SingleRegionNavmeshTriangulation::State, 3> SingleRegionNavm
                   if (link.srcObjectGlobalId == currentState.getObjectData().objectInstanceId ||
                       link.destObjectGlobalId == currentState.getObjectData().objectInstanceId) {
                     const auto &linkData = linkDataMap_.at(linkId);
+
+                    // Coincident seam: the two objects abut along a shared line, so
+                    // this stitch is crossable directly anywhere the other object is
+                    // present on the far side - exactly like a terrain<->object (0x00)
+                    // on-ramp. Stepping straight across avoids being funneled through
+                    // the degenerate corridor between the two near-coincident edges
+                    // (which collapses to one end of the seam). Polyanya then takes
+                    // the shorter, straight crossing.
+                    if (linkData.edgesCoincident) {
+                      const auto ourId = currentState.getObjectData().objectInstanceId;
+                      const auto otherId = (link.srcObjectGlobalId == ourId) ? link.destObjectGlobalId
+                                                                             : link.srcObjectGlobalId;
+                      for (const auto &neighborObjectData : getObjectDatasForTriangle(neighborTriangleIndex)) {
+                        if (neighborObjectData.objectInstanceId == otherId) {
+                          auto newState = currentState;
+                          newState.setNewTriangleAndEntryEdge(neighborTriangleIndex, entryEdgeIndex);
+                          newState.setObjectData(neighborObjectData);
+                          return newState;
+                        }
+                      }
+                      // The far side does not carry the other object here; fall
+                      // through to the normal link-corridor handling below.
+                    }
+
                     if (linkData.accessibleTriangleIndices.find(neighborTriangleIndex) != linkData.accessibleTriangleIndices.end()) {
                       // This link is for our object
                       State newState(neighborTriangleIndex, entryEdgeIndex);

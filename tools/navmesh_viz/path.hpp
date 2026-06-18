@@ -10,6 +10,11 @@
 
 namespace navmesh_viz {
 
+// Character collision radius used for path queries (Polyanya agent radius).
+// Exposed so the server can report it (GET /info) and the web client can draw
+// the footprint to scale.
+constexpr double kAgentRadius = 3.14;
+
 struct PathResult {
   bool ok{false};
   std::string error;

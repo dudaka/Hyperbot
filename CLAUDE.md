@@ -12,15 +12,22 @@ A **three.js visualization** of the navmesh (terrain + BMS objects) with interac
 S->G path queries, using Hyperbot's **pathfinding/navigation as the backend**. The first
 cut is **implemented and runnable** in `tools/navmesh_viz/` (standalone C++ HTTP service +
 a `web/` three.js client; region scopes 1x1/3x3/5x5 centered on region `5c87` = Hotan).
-**Two testing/hardening passes are done.** Pass 1: query log panel + fixed layer-aware path
+**Three testing/hardening passes are done.** Pass 1: query log panel + fixed layer-aware path
 height (DP), long-segment densification, and a cross-region stairway-link bug. Pass 2:
 fixed the **object-stitch vertical "teleport"** - object outline edges flagged `0x08`
 (object<->object stitch) were wrongly usable as terrain->object on-ramps; only `0x00`
-(object<->terrain) should be. Pass 2 also added a blocked-terrain-walk guard, reworked the
-tool height DP, and added a compass + a `0x00`/`0x08` stitch-edge toggle.
+(object<->terrain) should be; plus a blocked-terrain-walk guard, a reworked height DP, and a
+compass + `0x00`/`0x08` stitch-edge toggle. Pass 3: fixed object<->object (`0x08`) **seam
+crossing** - where two coplanar object floors abut, their two near-coincident link edges form
+a degenerate "corridor" that produced spurious "No path" and ~60-unit detours; coincident
+seams are now crossed **directly** object-to-object (like a `0x00` on-ramp). Pass 3 also
+guarded a Polyanya degeneracy crash in `third_party/Pathfinder` (an authorized exception to
+the no-`third_party` rule, preserved as an in-repo patch) and added an agent-radius overlay.
 
-Current task: **keep testing the GUI path queries** (stacked-surface / cross-region /
-failure cases), and **run the Linux `bot` regression** for the shared `silkroad_lib`
+Current task: **resume testing the GUI path queries** (stacked-surface / cross-region /
+failure + the now-fixed `0x08` seam cases); **validate the coincident-seam threshold**
+(`kCoincidentSeamEpsilon=8.0`) against real fortress bridges so a genuine bridge isn't
+misclassified; and **run the Linux `bot` regression** for the four shared `silkroad_lib`
 pathfinding changes (top open risk - they are macOS/viz-validated only), then scale up.
 
 Status, how-to-run, key findings, gaps, and next steps: `docs/threejs-visualization-plan.md`.
