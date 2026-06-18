@@ -221,5 +221,6 @@ beneath it - disambiguated solely by the state's layer.
 The **legacy** `ui/` app already renders the navmesh in 2D (top-down, Qt `QGraphicsScene`):
 `ui/navmeshView.*`, `ui/regionGraphicsItem.*`, `ui/map/`. Useful as a reference for which
 data is extracted and how regions are drawn - but it is the deprecated UI (do not modify),
-and it is 2D, so it cannot show the stacked-surface behavior. The planned three.js demo is
-the 3D successor (see [threejs-visualization-plan.md](threejs-visualization-plan.md)).
+and it is 2D, so it cannot show the stacked-surface behavior. The 3D successor now exists
+as `tools/navmesh_viz/` (a standalone service over this pathfinder + a three.js client);
+see [threejs-visualization-plan.md](threejs-visualization-plan.md).

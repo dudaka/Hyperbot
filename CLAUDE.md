@@ -8,11 +8,16 @@ pybind11; monitoring is a Qt6 desktop app.
 
 ## Current focus
 
-Building a **three.js visualization** of the navmesh (terrain + BMS objects across
-regions) with interactive S->G path queries, using Hyperbot's **pathfinding/navigation
-as the backend**. Brief + open questions + next steps: `docs/threejs-visualization-plan.md`.
-Backend authority: `docs/pathfinding.md`. (The minimal backend is `silkroad_lib` + the
-`Pathfinder` submodule - the full `bot` target is not needed.)
+A **three.js visualization** of the navmesh (terrain + BMS objects) with interactive
+S->G path queries, using Hyperbot's **pathfinding/navigation as the backend**. The first
+cut is **implemented and runnable** in `tools/navmesh_viz/` (standalone C++ HTTP service +
+a `web/` three.js client; region scopes 1x1/3x3/5x5 centered on region `5c87`). Current
+task: **test the web UI and GUI path queries**, then scale up.
+
+Status, how-to-run, key findings, gaps, and next steps: `docs/threejs-visualization-plan.md`.
+Tool usage: `tools/navmesh_viz/README.md`. Backend authority: `docs/pathfinding.md`.
+The minimal backend is `silkroad_lib` + the `Pathfinder` submodule - the full `bot`
+target is not needed (the tool even compiles only a subset of `silkroad_lib`).
 
 ## Where things live
 

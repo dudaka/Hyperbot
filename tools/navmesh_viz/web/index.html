@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Navmesh Visualization</title>
+    <style>
+      html, body { margin: 0; height: 100%; overflow: hidden; background: #0b0e14; }
+      #app { position: fixed; inset: 0; }
+      #hud {
+        position: fixed; top: 12px; left: 12px; max-width: 320px;
+        font: 13px/1.5 ui-monospace, Menlo, monospace; color: #d7dde8;
+        background: rgba(16, 20, 28, 0.82); padding: 12px 14px; border-radius: 8px;
+        border: 1px solid #2a3342;
+      }
+      #hud b { color: #7fd1ff; }
+      #hud .s { color: #5fe08a; }
+      #hud .g { color: #ff7b7b; }
+      #hud button {
+        margin-top: 8px; font: inherit; color: #d7dde8; background: #1b2330;
+        border: 1px solid #38445a; border-radius: 6px; padding: 4px 10px; cursor: pointer;
+      }
+      #hud button:hover { background: #232d3d; }
+      #hud button:disabled { opacity: 0.4; cursor: not-allowed; }
+      #scope { margin-top: 10px; display: flex; gap: 6px; }
+      #scope button.active { background: #2d6cff; border-color: #2d6cff; color: #fff; }
+      #status { margin-top: 8px; color: #9aa6b8; }
+    </style>
+  </head>
+  <body>
+    <div id="app"></div>
+    <div id="hud">
+      <div><b>Navmesh Visualization</b></div>
+      <div>Drag to orbit, scroll to zoom.</div>
+      <div>Click to set <span class="s">S</span>, click again for
+        <span class="g">G</span>. The clicked surface height picks the layer.</div>
+      <div>Region scope:</div>
+      <div id="scope">
+        <button data-radius="0">1x1</button>
+        <button data-radius="1">3x3</button>
+        <button data-radius="2">5x5</button>
+      </div>
+      <div id="status">Loading geometry...</div>
+      <button id="reset">Reset S/G</button>
+    </div>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

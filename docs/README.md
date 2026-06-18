@@ -7,13 +7,15 @@ codebase.
 
 - The codebase has been mapped end to end (see the docs below). These are the durable
   context files; keep them correct and consistent as work proceeds.
-- **Active goal:** build a **three.js visualization** that renders the navmesh (terrain +
-  BMS objects across regions) and interactively queries paths between two points, using
-  Hyperbot's **pathfinding/navigation as the backend**. The brief, findings, open
-  questions, and next steps are in **[threejs-visualization-plan.md](threejs-visualization-plan.md)**;
-  the backend authority is **[pathfinding.md](pathfinding.md)**.
-- The next session's job is to turn that brief into a concrete implementation plan. Start by
-  reading those two files.
+- **Active goal:** a **three.js visualization** that renders the navmesh (terrain + BMS
+  objects across regions) and interactively queries paths between two points, using
+  Hyperbot's **pathfinding/navigation as the backend**. The first cut is **implemented and
+  runnable** in `tools/navmesh_viz/` (standalone C++ service + `web/` three.js client;
+  region scopes 1x1/3x3/5x5 centered on region `5c87`).
+- Status, how-to-run, key findings, gaps, and next steps are in
+  **[threejs-visualization-plan.md](threejs-visualization-plan.md)**; the backend authority
+  is **[pathfinding.md](pathfinding.md)**. Current task: **test the web UI and GUI path
+  queries**, then push the scaling/quality work listed there.
 
 ## Read in this order
 
@@ -34,9 +36,9 @@ codebase.
    C++/JAX boundary, and checkpointing.
 7. **[ui-and-ipc.md](ui-and-ipc.md)** - The ZeroMQ + protobuf transport, the protobuf
    message catalog, the Qt rl_ui dashboard, config files, and the build system.
-8. **[threejs-visualization-plan.md](threejs-visualization-plan.md)** - Forward-looking
-   brief for the planned 3D navmesh/pathfinding visualization (goal, backend reuse,
-   architecture options, open questions, next steps).
+8. **[threejs-visualization-plan.md](threejs-visualization-plan.md)** - Status & handoff
+   for the 3D navmesh/pathfinding visualization (`tools/navmesh_viz/`): what exists, how to
+   run/test, resolved decisions, key findings, known gaps, and next steps.
 
 > These docs describe the code as of the reading. File:line references can drift; treat
 > the named files/classes as the source of truth and re-confirm specifics before relying
