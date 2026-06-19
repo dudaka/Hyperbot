@@ -27,12 +27,7 @@
 
 namespace {
 
-constexpr uint16_t kCenterRegionId = 0x5c87;
-
-// The 9x9 scope (R=4) uses its own center, 2 regions south of kCenterRegionId,
-// so it is not concentric with the smaller scopes (switching into it shifts the
-// view south).
-constexpr uint16_t k9x9CenterRegionId = 0x5a87;
+constexpr uint16_t kCenterRegionId = 0x5f82;
 
 // Region ids in a square ring of radius R around the center (R=0 -> just the
 // center, R=1 -> 3x3, R=2 -> 5x5, R=3 -> 7x7, R=4 -> 9x9), clamped to valid
@@ -92,16 +87,14 @@ int main(int argc, char **argv) {
   const int radius = (argc > 3) ? std::atoi(argv[3]) : 0;
 
   std::cout << "Loading navmesh from \"" << dataPath.string()
-            << "\" (center=0x5c87, 9x9 center=0x5a87, ring radius=" << radius
-            << ")\n";
+            << "\" (center=0x5f82, ring radius=" << radius << ")\n";
   // Load every region up to the requested radius; in serve mode the client can
-  // then request any smaller ring without a reload. Each radius picks its center
-  // (the 9x9 recenters on 0x5a87), so the allow-list is the union of all rings.
+  // then request any smaller ring without a reload. Every scope is concentric on
+  // kCenterRegionId, so the allow-list is the union of all rings.
   std::vector<std::set<uint16_t>> regionSetsByRadius;
   std::set<uint16_t> allRegions;
   for (int r = 0; r <= radius; ++r) {
-    const uint16_t center = (r >= 4) ? k9x9CenterRegionId : kCenterRegionId;
-    std::set<uint16_t> ring = clusterRegionIds(center, r);
+    std::set<uint16_t> ring = clusterRegionIds(kCenterRegionId, r);
     allRegions.insert(ring.begin(), ring.end());
     regionSetsByRadius.push_back(std::move(ring));
   }
@@ -112,11 +105,7 @@ int main(int argc, char **argv) {
 
   const auto &regionMap = navmesh.getRegionMap();
   if (regionMap.find(kCenterRegionId) == regionMap.end()) {
-    std::cerr << "Center region 0x5c87 not present\n";
-    return 1;
-  }
-  if (radius >= 4 && regionMap.find(k9x9CenterRegionId) == regionMap.end()) {
-    std::cerr << "9x9 center region 0x5a87 not present\n";
+    std::cerr << "Center region 0x5f82 not present\n";
     return 1;
   }
   std::cout << "Parsed " << regionMap.size() << " region(s)\n";

@@ -269,15 +269,33 @@ beneath it - disambiguated solely by the state's layer.
   timeout. The two throw sites now fall back to the library's own "skip this successor unless we
   can turn around the constraint" logic (regression-safe: only previously-crashing inputs
   change). This **modifies `third_party/`** - an authorized exception to the usual rule - kept
-  as `tools/navmesh_viz/patches/pathfinder-polyanya-degeneracy-guard.patch`, **not** a submodule
-  bump (a fresh `git submodule update` reverts it). Now optional: the coincident-seam fix
-  avoids the degenerate corridor, so the case is no longer reached for known data.
+  as `tools/navmesh_viz/patches/pathfinder-polyanya-fixes.patch` (which also bundles the
+  reachability guard below), **not** a submodule bump (a fresh `git submodule update` reverts
+  it). Now optional: the coincident-seam fix avoids the degenerate corridor, so the case is no
+  longer reached for known data.
+- **`canGetToState` reachability pre-check re-expansion blow-up guarded (navmesh-viz pass 5,
+  in the same patch).** Before Polyanya runs, `findShortestPath` calls `canGetToState` - a
+  greedy best-first triangle search that returns whether the goal is reachable at all. It
+  enqueued successors already on the heap and had **no closed-set skip at pop**, so on dense /
+  large meshes the same states were re-expanded thousands of times (observed ~20M expansions
+  over only ~thousands of distinct states, heap into the millions) and the pre-check **timed
+  out -> empty result -> reported as "no path"/"timeout"**. This was the real cause of the
+  earlier asymmetric "starts-on-an-object-surface times out, starts-on-terrain is fast" puzzle.
+  Fix: a one-line `if (visited.find(currentState) != visited.end()) continue;` at pop. Effect:
+  those object-start queries drop from a 5s timeout to ~0.5s; each state is expanded once.
+  Regression-safe (reachability is boolean; skipping an already-expanded state changes nothing).
 - **No-path = throw OR empty**: `findShortestPath` either throws (bad start/goal triangle,
   degeneracy) or returns an **empty** path. A **timeout** returns empty too (its reachability
   pre-check `canGetToState` returns `false` on the deadline), so an empty result is
   **indistinguishable from a genuine disconnect** unless you time the call. The `bot` uses
-  150ms (above); the `navmesh_viz` tool raised its own copy to 5s and times the call to report
-  `"Search timed out"` vs `"No path found"` (see threejs-visualization-plan.md, pass 4).
+  150ms (above); the `navmesh_viz` tool raised its own copy to **30s** and times the call to
+  report `"Search timed out"` vs `"No path found"` (see threejs-visualization-plan.md, pass 5).
+- **Polyanya cost is genuinely O(millions of expansions) for very long paths.** A path that
+  crosses ~20 regions of finely-triangulated terrain can need ~3.9M interval expansions and
+  ~22s - and yet be a real, optimal path (measured on the 23x23 viz scope; the reachability
+  pre-check confirmed connectivity in ~2k expansions, and Polyanya's `expansions == visited`,
+  so there is no re-expansion bug - it is inherent scale). This is why the viz budget is 30s;
+  it is distinct from the `canGetToState` bug above (that was re-expansion; this is distance).
 - **Output waypoints have height ~0** - any 3D consumer must reconstruct surface height. The
   Pathfinder result (`StraightPathSegment`) exposes only 2D points; the A* surface/layer state
   is internal and not returned, so a 3D consumer must re-derive which surface each leg is on.

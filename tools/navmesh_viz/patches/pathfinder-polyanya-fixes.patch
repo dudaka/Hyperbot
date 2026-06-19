@@ -1,8 +1,23 @@
 diff --git a/pathfinder.h b/pathfinder.h
-index c05ce7c..0746282 100644
+index c05ce7c..ec58a3e 100644
 --- a/pathfinder.h
 +++ b/pathfinder.h
-@@ -2501,7 +2501,15 @@ const Vector &successorEdgeRightPoint) const {
+@@ -500,6 +500,14 @@ bool Pathfinder<NavmeshType>::canGetToState(const State &startState, const State
+     const State &currentState = stateAndCost.state;;
+     stateHeap.pop();
+ 
++    // Successors are enqueued without an in-heap dedup, so the same state can sit
++    // in the heap many times. Skip any copy that was already expanded; without
++    // this guard a greedy front re-expands states millions of times and the
++    // reachability check times out (e.g. starting on dense stacked object geometry).
++    if (visited.find(currentState) != visited.end()) {
++      continue;
++    }
++
+     // Check if this is the goal.
+     if (currentState.isGoal()) {
+       return true;
+@@ -2501,7 +2509,15 @@ const Vector &successorEdgeRightPoint) const {
            // Lines must be parallel but not overlapping.
            // If the right of our interval and the endpoint of the successor edge are config_.agentRadius() apart, then there is no intersection with a constraint
            if (math::lessThan(math::distance(*endOfIntervalForIntersectionTest, successorEdgeRightPoint), config_.agentRadius())) {
@@ -19,7 +34,7 @@ index c05ce7c..0746282 100644
            }
          } else if (i1 == std::numeric_limits<double>::infinity() || i2 == std::numeric_limits<double>::infinity()) {
            throw std::runtime_error("i1="+std::to_string(i1)+" or i2="+std::to_string(i2)+" is inf [1]");
-@@ -2609,7 +2617,13 @@ const Vector &successorEdgeRightPoint) const {
+@@ -2609,7 +2625,13 @@ const Vector &successorEdgeRightPoint) const {
            // If the left of our interval and the endpoint of the successor edge are config_.agentRadius() apart, then there is no intersection with a constraint
            if (math::lessThan(math::distance(*endOfIntervalForIntersectionTest, successorEdgeLeftPoint), config_.agentRadius())) {
              VLOG(1) << "End of left interval is not config_.agentRadius() away from the left of the successor edge";

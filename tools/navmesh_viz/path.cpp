@@ -184,10 +184,12 @@ PathResult findPath(
   PathResult result;
 
   // The viz is an interactive debugging tool, not the real-time bot, so it can
-  // afford a generous search budget: a correct answer after a couple of seconds
-  // beats a fast wrong "No path". A query exceeding this is reported as a timeout
-  // (distinct from a genuine disconnect) so the log never conflates the two.
-  constexpr std::chrono::milliseconds kPathTimeout{5000};
+  // afford a generous search budget: a correct answer beats a fast wrong "No path".
+  // A long cross-mesh path (20+ regions) can take Polyanya tens of seconds and
+  // millions of interval expansions, so the budget is large. A query exceeding it
+  // is reported as a timeout (distinct from a genuine disconnect) so the log never
+  // conflates the two.
+  constexpr std::chrono::milliseconds kPathTimeout{30000};
 
   pathfinder::PathfinderConfig config(pathfinder::PathfinderAlgorithm::kPolyanya);
   config.setAgentRadius(kAgentRadius);

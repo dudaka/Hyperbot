@@ -21,20 +21,19 @@ cmake --build build --target navmesh_viz
 
 ## Run
 
-Region scope is the center region `5c87` (Hotan) plus a ring of radius R
-(0 = single region, 1 = 3x3 = 9, 2 = 5x5 = 25, 3 = 7x7 = 49, 4 = 9x9 = 81). Scopes
-0-3 are concentric on `5c87`; the 9x9 (R=4) recenters on `5a87` (2 regions south),
-so switching into it shifts the view south. `serve` loads every ring up to R and
-caches geometry per radius, so the web UI can switch scope with no reload. Regions
-that are non-existent, closed (no walkable area), or sealed off (no usable link to a
-neighbor in view) are omitted from rendering.
+Region scope is the center region `5f82` plus a ring of radius R: scope is the
+(2R+1)x(2R+1) square of regions, for R = 0 (1x1) up to R = 11 (23x23 = 529). Every
+scope is concentric on `5f82`. `serve` loads every ring up to R and caches geometry
+per radius, so the web UI can switch scope with no reload. Regions that are
+non-existent, closed (no walkable area), or sealed off (no usable link to a neighbor
+in view) are omitted from rendering.
 
 ```
 # Validate: dump geometry to a file + run a sample path query.
 ./build/navmesh_viz dump  ../../sro-data/Data 0
 
-# Serve all five scopes (load R=4) on :5577.
-./build/navmesh_viz serve ../../sro-data/Data 4 5577
+# Serve all scopes up to 23x23 (load R=11) on :5577.
+./build/navmesh_viz serve ../../sro-data/Data 11 5577
 ```
 
 Endpoints (CORS-enabled):
@@ -66,19 +65,27 @@ npm run dev   # Vite proxies /geometry, /path, /info to 127.0.0.1:5577
 
 Open **http://localhost:5173/** (or the next free port Vite prints, e.g. `5174`;
 use `localhost`, not `127.0.0.1` - Vite binds IPv6). Scope defaults to **1x1**;
-use the 1x1 / 3x3 / 5x5 buttons to switch. Drag to orbit; click to place S then
-G - the clicked surface height selects the layer, and the returned path is drawn
-following the surfaces. "No path" is expected when the two points are separated
-by walls / cliffs / water.
+pick a scope from the dropdown to switch. The default camera is a **flat top-down,
+North-up / East-right map** (conventional orientation - the display mirrors the
+North-South axis to make both hold at once, since Silkroad is left-handed and
+three.js right-handed). Drag to orbit; click to place S then G - the clicked
+surface height selects the layer, and the returned path is drawn following the
+surfaces. "No path" is expected when the two points are separated by walls /
+cliffs / water.
 
 An **on-screen log panel** (and the browser console) records every pick (surface,
 absolute coords) and every `/path` request + response - use it to capture the
 exact input behind a misbehaving query. "Clear log" empties it.
 
+The path result shows the **query time** (e.g. `Path: N waypoint(s) in 21ms`); a long
+cross-mesh query on a big scope can take ~20s (the backend Polyanya budget is 30s), and the
+UI blocks until it returns. **Reset view** re-frames to the default top-down in one click
+(distinct from **Reset S/G**, which only clears the markers + path).
+
 UI extras:
-- **Compass** (top-right) - projects the world axes each frame (`+Z`=North, `+X`=East).
-  May read mirror-flipped vs the in-game compass (left-handed Silkroad vs right-handed
-  three.js); still a consistent orientation reference.
+- **Compass** (top-right) - projects the world axes each frame. With the North-South
+  display mirror, North (`+Z`) reads up and East (`+X`) right, matching a conventional
+  map; the rose stays correct through any orbit.
 - **Stitch-edge toggle** (HUD checkbox, off by default) - overlays object outline edges:
   cyan `0x00` (object<->terrain) and magenta `0x08` (object<->object), always-on-top.
 - **Agent-radius rings** - each S/G marker draws a flat ring of radius = the backend's agent

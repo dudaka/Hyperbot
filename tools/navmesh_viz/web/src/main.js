@@ -32,6 +32,20 @@ const camera = new THREE.PerspectiveCamera(
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true;
 
+// Distance for the default top-down framing; set per loaded mesh in renderGeometry.
+let defaultCamDist = 0;
+
+// Restore the default flat top-down, North-up / East-right view. Looks straight
+// down -Y with up = -Z, so rendered North (local +Z, mirrored to scene -Z) is at
+// the top and East (+X) on the right. Re-applying position + target clears any
+// orbit/zoom/pan back to the default framing.
+function resetView() {
+  camera.up.set(0, 0, -1);
+  camera.position.set(0, defaultCamDist, 0);
+  controls.target.set(0, 0, 0);
+  controls.update();
+}
+
 scene.add(new THREE.HemisphereLight(0xcfe3ff, 0x202830, 1.1));
 const sun = new THREE.DirectionalLight(0xffffff, 1.4);
 sun.position.set(0.5, 1, 0.3);
@@ -39,7 +53,12 @@ scene.add(sun);
 
 // Everything is stored in absolute coords; the group is shifted so the loaded
 // region sits near the origin (better float precision + simpler camera).
+// The North-South axis is mirrored (scale.z = -1) so that, viewed from above,
+// real-world North (local +Z) reads at the top of the screen while East (+X)
+// stays on the right - a conventional map orientation. Silkroad is left-handed
+// and three.js right-handed, so this flip is what makes both hold at once.
 const world = new THREE.Group();
+world.scale.z = -1;
 scene.add(world);
 let originOffset = new THREE.Vector3();
 let currentRadius = 0;
@@ -224,13 +243,17 @@ async function renderGeometry(url, loadingLabel, loadedSuffix = '') {
   stitchGroup.visible = showStitch.checked;
 
   bbox.getCenter(originOffset);
-  world.position.copy(originOffset).multiplyScalar(-1);
+  // Recenter the loaded mesh on the scene origin. The world group is mirrored
+  // (scale.z = -1), so position = -scale * center, componentwise.
+  world.position.set(
+    -world.scale.x * originOffset.x,
+    -world.scale.y * originOffset.y,
+    -world.scale.z * originOffset.z,
+  );
 
   const size = bbox.getSize(new THREE.Vector3());
-  const camDist = Math.max(size.x, size.z) * 0.7 + 200;
-  camera.position.set(0, camDist, camDist);
-  controls.target.set(0, 0, 0);
-  controls.update();
+  defaultCamDist = Math.max(size.x, size.z) * 0.9 + 300;
+  resetView();
 
   setStatus(`Loaded ${data.regions.length} region(s)${loadedSuffix}. Click to place S.`);
 }
@@ -238,7 +261,8 @@ async function renderGeometry(url, loadingLabel, loadedSuffix = '') {
 async function loadGeometry(radius) {
   currentRadius = radius;
   await renderGeometry(`/geometry?r=${radius}`,
-    `Loading ${['1x1', '3x3', '5x5', '7x7', '9x9'][radius]}...`);
+    `Loading ${['1x1', '3x3', '5x5', '7x7', '9x9', '11x11', '13x13',
+                '15x15', '17x17', '19x19', '21x21', '23x23'][radius]}...`);
 }
 
 async function loadZone(name) {
@@ -298,10 +322,13 @@ async function queryPath() {
     G: { x: g.x, y: g.y, z: g.z },
     url,
   });
+  const t0 = performance.now();
   const res = await (await fetch(url)).json();
-  logLine(res.ok ? 'res-ok' : 'res-err', '[path] response', res);
+  const elapsedMs = Math.round(performance.now() - t0);
+  const dur = elapsedMs >= 1000 ? `${(elapsedMs / 1000).toFixed(1)}s` : `${elapsedMs}ms`;
+  logLine(res.ok ? 'res-ok' : 'res-err', '[path] response', { ...res, elapsedMs });
   if (!res.ok) {
-    setStatus(`No path: ${res.error}`);
+    setStatus(`No path: ${res.error} (${dur})`);
     return;
   }
   const points = res.waypoints.map((w) => new THREE.Vector3(w[0], w[1] + 3, w[2]));
@@ -312,7 +339,7 @@ async function queryPath() {
   pathLine = new THREE.Mesh(
     geometry, new THREE.MeshBasicMaterial({ color: 0xffe14d }));
   world.add(pathLine);
-  setStatus(`Path: ${points.length} waypoint(s). Click Reset to retry.`);
+  setStatus(`Path: ${points.length} waypoint(s) in ${dur}. Click Reset to retry.`);
 }
 
 function onPick(clientX, clientY) {
@@ -323,9 +350,11 @@ function onPick(clientX, clientY) {
   const hits = raycaster.intersectObjects(pickables, false);
   if (hits.length === 0) return;
 
-  // Hit point is in world space; convert back to the absolute frame.
+  // Hit point is in scene space; convert back to the absolute frame through the
+  // world group's transform, which accounts for the recenter shift and the
+  // North-South mirror (scale.z = -1).
   const hit = hits[0];
-  const absolute = hit.point.clone().add(originOffset);
+  const absolute = world.worldToLocal(hit.point.clone());
   if (endpoints.length >= 2) clearSelection();
   const kind = endpoints.length === 0 ? 'S' : 'G';
   endpoints.push({ vec: absolute, kind });
@@ -354,6 +383,7 @@ renderer.domElement.addEventListener('pointerup', (e) => {
   if (moved < 5) onPick(e.clientX, e.clientY);
 });
 document.getElementById('reset').addEventListener('click', clearSelection);
+document.getElementById('resetView').addEventListener('click', resetView);
 
 window.addEventListener('resize', () => {
   camera.aspect = window.innerWidth / window.innerHeight;
@@ -362,8 +392,10 @@ window.addEventListener('resize', () => {
 });
 
 // --- Compass ------------------------------------------------------------------
-// World +Z is North and +X is East (Silkroad region axes). Each frame the world
-// axes are projected to screen so the rose stays correct through any rotation.
+// Real-world North is local +Z and East is local +X (Silkroad region axes), but
+// the display mirrors the N-S axis (world.scale.z = -1), so North renders along
+// scene -Z. The rose projects scene-space directions through the camera each
+// frame (staying correct through any orbit), hence N points down -Z below.
 const compass = document.getElementById('compass');
 const compassCtx = compass.getContext('2d');
 const compassSize = 96;
@@ -374,9 +406,9 @@ const compassSize = 96;
   compassCtx.scale(dpr, dpr);
 }
 const compassDirs = [
-  { label: 'N', v: [0, 0, 1], accent: true },
+  { label: 'N', v: [0, 0, -1], accent: true },
   { label: 'E', v: [1, 0, 0] },
-  { label: 'S', v: [0, 0, -1] },
+  { label: 'S', v: [0, 0, 1] },
   { label: 'W', v: [-1, 0, 0] },
 ];
 const _ca = new THREE.Vector3();
@@ -423,12 +455,11 @@ function animate() {
 animate();
 
 // --- Region-scope switcher ---------------------------------------------------
-const scopeButtons = [...document.querySelectorAll('#scope button')];
+const scopeSelect = document.getElementById('scopeSelect');
 
 function setActiveScope(radius) {
-  for (const btn of scopeButtons) {
-    btn.classList.toggle('active', Number(btn.dataset.radius) === radius);
-  }
+  // A radius of -1 (zone mode) has no matching option and deselects the dropdown.
+  scopeSelect.value = String(radius);
 }
 
 async function selectScope(radius) {
@@ -441,9 +472,7 @@ async function selectScope(radius) {
   }
 }
 
-for (const btn of scopeButtons) {
-  btn.addEventListener('click', () => selectScope(Number(btn.dataset.radius)));
-}
+scopeSelect.addEventListener('change', () => selectScope(Number(scopeSelect.value)));
 
 // --- Zone loader -------------------------------------------------------------
 const zoneInput = document.getElementById('zoneInput');
@@ -487,8 +516,8 @@ async function init() {
     maxRadius = info.maxRadius;
     if (typeof info.agentRadius === 'number') agentRadius = info.agentRadius;
   } catch { /* keep defaults */ }
-  for (const btn of scopeButtons) {
-    btn.disabled = Number(btn.dataset.radius) > maxRadius;
+  for (const opt of scopeSelect.options) {
+    opt.disabled = Number(opt.value) > maxRadius;
   }
   await populateZones();
   await selectScope(Math.min(currentRadius, maxRadius));

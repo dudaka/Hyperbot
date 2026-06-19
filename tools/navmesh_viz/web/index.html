@@ -23,7 +23,10 @@
       #hud button:hover { background: #232d3d; }
       #hud button:disabled { opacity: 0.4; cursor: not-allowed; }
       #scope { margin-top: 10px; display: flex; gap: 6px; }
-      #scope button.active { background: #2d6cff; border-color: #2d6cff; color: #fff; }
+      #scope select {
+        font: inherit; color: #d7dde8; background: #1b2330;
+        border: 1px solid #38445a; border-radius: 6px; padding: 4px 8px; cursor: pointer;
+      }
       #zone { margin-top: 8px; display: flex; gap: 6px; }
       #zone input {
         flex: 1; min-width: 0; font: inherit; color: #d7dde8; background: #1b2330;
@@ -57,11 +60,20 @@
         <span class="g">G</span>. The clicked surface height picks the layer.</div>
       <div>Region scope:</div>
       <div id="scope">
-        <button data-radius="0">1x1</button>
-        <button data-radius="1">3x3</button>
-        <button data-radius="2">5x5</button>
-        <button data-radius="3">7x7</button>
-        <button data-radius="4">9x9</button>
+        <select id="scopeSelect">
+          <option value="0">1x1</option>
+          <option value="1">3x3</option>
+          <option value="2">5x5</option>
+          <option value="3">7x7</option>
+          <option value="4">9x9</option>
+          <option value="5">11x11</option>
+          <option value="6">13x13</option>
+          <option value="7">15x15</option>
+          <option value="8">17x17</option>
+          <option value="9">19x19</option>
+          <option value="10">21x21</option>
+          <option value="11">23x23</option>
+        </select>
       </div>
       <div id="zone">
         <input id="zoneInput" list="zoneList" placeholder="type to search zone..." autocomplete="off">
@@ -70,6 +82,7 @@
       </div>
       <div id="status">Loading geometry...</div>
       <button id="reset">Reset S/G</button>
+      <button id="resetView">Reset view</button>
       <button id="clearLog">Clear log</button>
       <label id="stitchToggle" style="display:block; margin-top:10px;">
         <input type="checkbox" id="showStitch" /> Stitch edges
