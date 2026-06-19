@@ -272,8 +272,12 @@ beneath it - disambiguated solely by the state's layer.
   as `tools/navmesh_viz/patches/pathfinder-polyanya-degeneracy-guard.patch`, **not** a submodule
   bump (a fresh `git submodule update` reverts it). Now optional: the coincident-seam fix
   avoids the degenerate corridor, so the case is no longer reached for known data.
-- **No-path = throw**: `findShortestPath` empty/throwing propagates as an exception; callers
-  must handle "no path."
+- **No-path = throw OR empty**: `findShortestPath` either throws (bad start/goal triangle,
+  degeneracy) or returns an **empty** path. A **timeout** returns empty too (its reachability
+  pre-check `canGetToState` returns `false` on the deadline), so an empty result is
+  **indistinguishable from a genuine disconnect** unless you time the call. The `bot` uses
+  150ms (above); the `navmesh_viz` tool raised its own copy to 5s and times the call to report
+  `"Search timed out"` vs `"No path found"` (see threejs-visualization-plan.md, pass 4).
 - **Output waypoints have height ~0** - any 3D consumer must reconstruct surface height. The
   Pathfinder result (`StraightPathSegment`) exposes only 2D points; the A* surface/layer state
   is internal and not returned, so a 3D consumer must re-derive which surface each leg is on.

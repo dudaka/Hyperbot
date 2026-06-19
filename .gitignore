@@ -34,3 +34,4 @@ runs/
 rl_debugging/
 sro-data/
 .playwright-mcp/
+navmesh-viz-*.png

@@ -41,7 +41,7 @@ set(SILKROAD_NAVMESH_SOURCES
 )
 
 add_executable(navmesh_viz
-  main.cpp geometry.cpp path.cpp server.cpp ${SILKROAD_NAVMESH_SOURCES})
+  main.cpp geometry.cpp path.cpp server.cpp zones.cpp ${SILKROAD_NAVMESH_SOURCES})
 target_include_directories(navmesh_viz PRIVATE
   ${SILKROAD_LIB_DIR}/src ${HTTPLIB_INCLUDE_DIR})
 target_link_libraries(navmesh_viz PRIVATE

@@ -9,26 +9,38 @@ pybind11; monitoring is a Qt6 desktop app.
 ## Current focus
 
 A **three.js visualization** of the navmesh (terrain + BMS objects) with interactive
-S->G path queries, using Hyperbot's **pathfinding/navigation as the backend**. The first
-cut is **implemented and runnable** in `tools/navmesh_viz/` (standalone C++ HTTP service +
-a `web/` three.js client; region scopes 1x1/3x3/5x5 centered on region `5c87` = Hotan).
-**Three testing/hardening passes are done.** Pass 1: query log panel + fixed layer-aware path
-height (DP), long-segment densification, and a cross-region stairway-link bug. Pass 2:
-fixed the **object-stitch vertical "teleport"** - object outline edges flagged `0x08`
-(object<->object stitch) were wrongly usable as terrain->object on-ramps; only `0x00`
-(object<->terrain) should be; plus a blocked-terrain-walk guard, a reworked height DP, and a
-compass + `0x00`/`0x08` stitch-edge toggle. Pass 3: fixed object<->object (`0x08`) **seam
-crossing** - where two coplanar object floors abut, their two near-coincident link edges form
-a degenerate "corridor" that produced spurious "No path" and ~60-unit detours; coincident
-seams are now crossed **directly** object-to-object (like a `0x00` on-ramp). Pass 3 also
-guarded a Polyanya degeneracy crash in `third_party/Pathfinder` (an authorized exception to
-the no-`third_party` rule, preserved as an in-repo patch) and added an agent-radius overlay.
+S->G path queries, using Hyperbot's **pathfinding/navigation as the backend**. It is
+**implemented and runnable** in `tools/navmesh_viz/` (standalone C++ HTTP service + a
+`web/` three.js client). Region scopes are concentric rings 1x1/3x3/5x5/7x7 on region
+`5c87` = Hotan, plus a **9x9** recentered on `5a87`; you can also **load any named zone**.
+**Several hardening passes are done.** Passes 1-3 (shared `silkroad_lib`/`Pathfinder`,
+committed): layer-aware path-height DP, long-segment densification, a cross-region
+stairway-link fix, the **object-stitch vertical "teleport"** fix (`0x08` object<->object
+seams were wrongly usable as terrain->object on-ramps; only `0x00` object<->terrain should
+be), a blocked-terrain-walk guard, the `0x08` **coincident-seam** direct-crossing fix, and a
+Polyanya degeneracy guard in `third_party/Pathfinder` (authorized exception, kept as an
+in-repo patch).
 
-Current task: **resume testing the GUI path queries** (stacked-surface / cross-region /
-failure + the now-fixed `0x08` seam cases); **validate the coincident-seam threshold**
-(`kCoincidentSeamEpsilon=8.0`) against real fortress bridges so a genuine bridge isn't
-misclassified; and **run the Linux `bot` regression** for the four shared `silkroad_lib`
-pathfinding changes (top open risk - they are macOS/viz-validated only), then scale up.
+This session (viz-only, uncommitted until the commit below): (a) **path-timeout fix** - the
+viz raised its own Polyanya timeout 150ms->5s and now reports `"Search timed out"` distinctly
+from `"No path found"` (root cause: the Pathfinder returns an **empty** result on timeout,
+which `path.cpp` had reported identically to a genuine disconnect - so earlier "No path"
+observations are suspect); (b) the **9x9 scope** on `5a87` (per-scope center + union
+allow-list); (c) a **closed/sealed/non-existent region render filter** (`regionIsPassable`
+in `geometry.cpp`: skip a region with no walkable tiles, or no usable global-edge link to a
+loaded neighbor); (d) **load-by-zone** - `zones.cpp` parses `textzonename_*.txt`
+(index 2 = region id, index 9 = English name) into **226 loadable zones**; the server builds a
+per-zone navmesh+triangulation+geometry on demand and caches it (`/zones`,
+`/geometry?zone=NAME`, `/path?...&zone=NAME`).
+
+Current task: **run the Linux `bot` regression** for the shared `silkroad_lib` pathfinding
+changes (top open risk - macOS/viz-validated only; reapply the Pathfinder patch first);
+**validate the coincident-seam threshold** (`kCoincidentSeamEpsilon=8.0`) against real
+fortress bridges; and continue GUI path-query testing (stacked-surface / cross-region /
+`0x08` seam / zones). Open viz gaps: the closed/sealed filter's true-positive path and the
+5s timeout label are not yet exercised by live data; the zone cache is unbounded; the 429
+instanced-dungeon zones are unsupported (codeName region ids, no dungeon navmesh in this
+extract).
 
 Status, how-to-run, key findings, gaps, and next steps: `docs/threejs-visualization-plan.md`.
 Tool usage: `tools/navmesh_viz/README.md`. Backend authority: `docs/pathfinding.md`

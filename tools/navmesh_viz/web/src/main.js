@@ -43,6 +43,9 @@ const world = new THREE.Group();
 scene.add(world);
 let originOffset = new THREE.Vector3();
 let currentRadius = 0;
+// Name of the loaded zone, or null when a radius scope is shown. When set, path
+// queries run within that zone's triangulation (passed as &zone=).
+let activeZone = null;
 
 // --- Pickable surfaces + markers ---------------------------------------------
 const pickables = [];
@@ -181,11 +184,20 @@ function clearWorld() {
   pickables.length = 0;
 }
 
-async function loadGeometry(radius) {
-  currentRadius = radius;
+// Fetches a geometry document (radius or zone) and renders it, reframing the
+// camera. `loadedSuffix` is appended to the "Loaded N region(s)" status.
+async function renderGeometry(url, loadingLabel, loadedSuffix = '') {
   clearWorld();
-  setStatus(`Loading ${['1x1', '3x3', '5x5'][radius]}...`);
-  const data = await (await fetch(`/geometry?r=${radius}`)).json();
+  setStatus(loadingLabel);
+  const data = await (await fetch(url)).json();
+  if (data.error) {
+    setStatus(`Error: ${data.error}`);
+    return;
+  }
+  if (!data.regions || data.regions.length === 0) {
+    setStatus(`No renderable regions${loadedSuffix}.`);
+    return;
+  }
 
   const bbox = new THREE.Box3();
   const tmp = new THREE.Vector3();
@@ -220,7 +232,18 @@ async function loadGeometry(radius) {
   controls.target.set(0, 0, 0);
   controls.update();
 
-  setStatus(`Loaded ${data.regions.length} region(s). Click to place S.`);
+  setStatus(`Loaded ${data.regions.length} region(s)${loadedSuffix}. Click to place S.`);
+}
+
+async function loadGeometry(radius) {
+  currentRadius = radius;
+  await renderGeometry(`/geometry?r=${radius}`,
+    `Loading ${['1x1', '3x3', '5x5', '7x7', '9x9'][radius]}...`);
+}
+
+async function loadZone(name) {
+  await renderGeometry(`/geometry?zone=${encodeURIComponent(name)}`,
+    `Loading zone ${name}...`, ` - zone: ${name}`);
 }
 
 // --- S/G picking + path query ------------------------------------------------
@@ -266,7 +289,10 @@ function clearSelection() {
 async function queryPath() {
   const [s, g] = endpoints.map((e) => e.vec);
   setStatus('Querying path...');
-  const url = `/path?sx=${s.x}&sy=${s.y}&sz=${s.z}&gx=${g.x}&gy=${g.y}&gz=${g.z}`;
+  let url = `/path?sx=${s.x}&sy=${s.y}&sz=${s.z}&gx=${g.x}&gy=${g.y}&gz=${g.z}`;
+  if (activeZone) {
+    url += `&zone=${encodeURIComponent(activeZone)}`;
+  }
   logLine('req', '[path] request', {
     S: { x: s.x, y: s.y, z: s.z },
     G: { x: g.x, y: g.y, z: g.z },
@@ -406,6 +432,7 @@ function setActiveScope(radius) {
 }
 
 async function selectScope(radius) {
+  activeZone = null; // back to radius mode
   setActiveScope(radius);
   try {
     await loadGeometry(radius);
@@ -416,6 +443,40 @@ async function selectScope(radius) {
 
 for (const btn of scopeButtons) {
   btn.addEventListener('click', () => selectScope(Number(btn.dataset.radius)));
+}
+
+// --- Zone loader -------------------------------------------------------------
+const zoneInput = document.getElementById('zoneInput');
+const zoneList = document.getElementById('zoneList');
+
+async function selectZone(name) {
+  if (!name) return;
+  activeZone = name;
+  setActiveScope(-1); // no radius scope is active in zone mode
+  try {
+    await loadZone(name);
+  } catch (err) {
+    setStatus(`Error: ${err.message}`);
+  }
+}
+
+document.getElementById('loadZone').addEventListener('click',
+  () => selectZone(zoneInput.value.trim()));
+zoneInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') selectZone(zoneInput.value.trim());
+});
+
+async function populateZones() {
+  try {
+    const zones = await (await fetch('/zones')).json();
+    zoneList.replaceChildren();
+    for (const z of zones) {
+      const opt = document.createElement('option');
+      opt.value = z.name;
+      opt.label = `${z.regions} region(s)`;
+      zoneList.appendChild(opt);
+    }
+  } catch { /* zone picker stays empty */ }
 }
 
 async function init() {
@@ -429,6 +490,7 @@ async function init() {
   for (const btn of scopeButtons) {
     btn.disabled = Number(btn.dataset.radius) > maxRadius;
   }
+  await populateZones();
   await selectScope(Math.min(currentRadius, maxRadius));
 }
 

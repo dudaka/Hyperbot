@@ -1,9 +1,15 @@
 # three.js Navmesh Visualization - Status & Handoff
 
-**Status: first cut IMPLEMENTED + three testing/hardening passes done, on macOS.** Region
-scopes 1x1 / 3x3 / 5x5 (center region `5c87` = Hotan, plus a ring) render in 3D; interactive
-S->G path queries work against Hyperbot's own pathfinder. The code lives in
-**`tools/navmesh_viz/`** (standalone C++ backend + `web/` three.js client).
+**Status: IMPLEMENTED + three hardening passes + a 4th (viz-only) session done, on macOS.**
+Region scopes 1x1 / 3x3 / 5x5 / 7x7 (concentric on `5c87` = Hotan) plus a **9x9** recentered
+on `5a87`, AND **load-by-zone** (any named zone) render in 3D; interactive S->G path queries
+work against Hyperbot's own pathfinder. The code lives in **`tools/navmesh_viz/`** (standalone
+C++ backend + `web/` three.js client).
+
+> Passes 1-3 changed shared `silkroad_lib`/`Pathfinder` (committed). The **4th session**
+> (path-timeout fix, 9x9 scope, closed/sealed render filter, load-by-zone) is **viz-only** -
+> it touches only `tools/navmesh_viz/` and does not change shared pathfinding. See
+> "Fixed - pass 4 (this session)".
 
 - **Pass 1** fixed three issues (layer-aware height reconstruction, long-segment
   densification, and a cross-region stairway-link bug in `silkroad_lib`).
@@ -27,11 +33,13 @@ S->G path queries work against Hyperbot's own pathfinder. The code lives in
   bot's agent radius 3.14. Added an agent-radius overlay (rings at S/G, read from `/info`). See
   "Fixed - pass 3".
 
-This file is the handoff for the next session, whose job is to **resume testing the GUI path
-queries** (stacked-surface / cross-region / failure + the now-fixed `0x08` seam cases),
-**validate the `kCoincidentSeamEpsilon=8.0` heuristic against real fortress bridges**, run the
-**Linux `bot` regression** for the shared `silkroad_lib` changes (top open risk), consider
-upstreaming the Pathfinder patch, then push the scaling work in "Next steps".
+This file is the handoff for the next session, whose job is to run the **Linux `bot`
+regression** for the shared `silkroad_lib` changes (top open risk; reapply the Pathfinder
+patch first), **validate the `kCoincidentSeamEpsilon=8.0` heuristic against real fortress
+bridges**, **resume testing the GUI path queries** (stacked-surface / cross-region / `0x08`
+seam / zones / failure messaging), consider upstreaming the Pathfinder patch, then push the
+scaling work in "Next steps". The 4th-session viz features (timeout, 9x9, filter, zones) are
+the newest surface area to exercise.
 
 Read [pathfinding.md](pathfinding.md) for the backend authority. Tool usage lives in
 `tools/navmesh_viz/README.md`.
@@ -55,30 +63,40 @@ Silkroad.
   the `gli` dependency) plus the `Pathfinder` submodule. Abseil + cpp-httplib come from a
   package manager (e.g. Homebrew). Builds on macOS (and should on Linux).
 - `main.cpp` - load + two modes: `dump` (write geometry JSON + a sample path query) and
-  `serve` (HTTP). `geometry.cpp` - terrain + BMS extraction to JSON (now also emits each
-  object's `outlineEdges` as `[srcVertexIndex, destVertexIndex, flag]` for edge inspection).
-  `path.cpp` - Polyanya query, segment densification (~10 units), and a **convex** height DP
-  over the stacked surfaces that **excludes blocked terrain** (see "Fixed - pass 2").
-  `server.cpp` - cpp-httplib endpoints.
+  `serve` (HTTP). `geometry.cpp` - terrain + BMS extraction to JSON (also emits each
+  object's `outlineEdges` as `[srcVertexIndex, destVertexIndex, flag]`; pass 4 added
+  `regionIsPassable`, a closed/sealed/non-existent **render filter**). `path.cpp` - Polyanya
+  query, segment densification (~10 units), a **convex** height DP over the stacked surfaces
+  that **excludes blocked terrain** (see "Fixed - pass 2"), and a **5s timeout** that is
+  reported as `"Search timed out"` distinctly from `"No path found"` (pass 4).
+  `zones.cpp` - parses the `textzonename_*.txt` zone table (pass 4). `server.cpp` -
+  cpp-httplib endpoints, incl. on-demand per-zone navmesh build + cache.
 - Data source: the **already-extracted** `sro-data/` loose files (`Data/`, `Map/`,
-  `Media/`); only `Data/navmesh/*` is used. The navmesh is parsed by driving
-  `NavmeshParser` directly.
-- Region scope: center `5c87` + ring radius R (R=0 -> 1 region, R=1 -> 3x3 = 9,
-  R=2 -> 5x5 = 25). `serve <data> <R> <port>` loads every ring up to R and caches geometry
-  per radius, so the client can switch scope with no reload.
-- Endpoints (CORS-enabled, default port 5577): `GET /geometry?r=N` (cached region set for
-  ring N), `GET /path?sx&sy&sz&gx&gy&gz` (absolute coords -> waypoints), `GET /info`
+  `Media/`); `Data/navmesh/*` for geometry, and `Media/server_dep/silkroad/textdata/` for the
+  zone table (pass 4). The navmesh is parsed by driving `NavmeshParser` directly.
+- Region scope: concentric rings on center `5c87` + radius R (R=0 -> 1, R=1 -> 3x3, R=2 ->
+  5x5, R=3 -> 7x7), plus **R=4 -> 9x9 recentered on `5a87`** (pass 4; not concentric - the
+  view shifts south). `serve <data> <R> <port>` loads every ring up to R (the parser
+  allow-list is the **union** across centers) and caches geometry per radius. **Zones** are a
+  separate axis: any zone is built + cached on demand (a fresh navmesh+triangulation per zone).
+- Endpoints (CORS-enabled, default port 5577): `GET /geometry?r=N` (cached ring N) or
+  `?zone=NAME` (on-demand zone, pass 4); `GET /zones` (`[{"name","regions"}]`, the 226
+  loadable zones; pass 4); `GET /path?sx&sy&sz&gx&gy&gz[&zone=NAME]` (absolute coords ->
+  waypoints; with `zone` the query runs in that zone's triangulation); `GET /info`
   (`{"maxRadius":N,"agentRadius":R}` - `agentRadius` = the pathfinder's collision radius,
-  added pass 3 so the client can draw the footprint to scale; `kAgentRadius` lives in
-  `path.hpp`).
+  added pass 3; `kAgentRadius` lives in `path.hpp`).
 
 **Frontend - `tools/navmesh_viz/web/` (vanilla three.js + Vite):**
 
 - Renders terrain (height-gradient vertex colors) + BMS objects (per-area colors so floors
   differ), `OrbitControls`, hemisphere + directional light.
-- **Region-scope switcher**: 1x1 / 3x3 / 5x5 buttons; switching disposes old meshes,
-  fetches `/geometry?r=N`, rebuilds, and reframes the camera. Buttons beyond the server's
-  loaded `maxRadius` are disabled.
+- **Region-scope switcher**: 1x1 / 3x3 / 5x5 / 7x7 / 9x9 buttons; switching disposes old
+  meshes, fetches `/geometry?r=N`, rebuilds, and reframes the camera. Buttons beyond the
+  server's loaded `maxRadius` are disabled.
+- **Zone picker** (pass 4): a type-ahead `<input list=datalist>` populated from `/zones` + a
+  "Load zone" button; loading a zone fetches `/geometry?zone=NAME` and sets `activeZone` so
+  subsequent `/path` calls carry `&zone=`. Selecting a scope button clears `activeZone`
+  (back to radius mode). Coexists with the scope buttons.
 - S/G picking: `THREE.Raycaster` against terrain + objects; first click = S (green), second
   = G (red), third resets. The **clicked surface Y** is sent through and selects the layer.
 - On S+G, calls `/path` and draws the waypoints as a tube hugging the surface.
@@ -101,19 +119,19 @@ Silkroad.
   surface kind, full-precision absolute/world coords, and NDC; every `/path` call logs the
   request (S, G, URL) and the raw response. A "Clear log" button empties the panel. Invaluable
   for capturing the exact input data behind a misbehaving query.
-- **Default scope is 1x1** (lightest load); switch to 3x3 / 5x5 as needed.
-- Vite proxies `/geometry`, `/path`, `/info` to `127.0.0.1:5577` (`/info` was missing from
-  `vite.config.js` and only added pass 3 - before that the client's `/info` fetch silently
-  fell back to defaults, which happened to match).
+- **Default scope is 1x1** (lightest load); switch to 3x3 / 5x5 / 7x7 / 9x9 or load a zone.
+- Vite proxies `/geometry`, `/path`, `/info`, `/zones` to `127.0.0.1:5577` (`/info` added
+  pass 3, `/zones` added pass 4; a proxy entry is required or the client's relative fetch 404s).
 
 ## How to run / test
 
 ```bash
-# 1. Backend - load all scopes (R=2) so the UI switcher has 1x1/3x3/5x5.
+# 1. Backend - load all scopes (R=4) so the UI switcher has 1x1..9x9 + zones.
 cd tools/navmesh_viz
 cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH=/opt/homebrew
 cmake --build build --target navmesh_viz
-./build/navmesh_viz serve ../../sro-data/Data 2 5577     # wait for "Serving on ..."
+./build/navmesh_viz serve ../../sro-data/Data 4 5577     # wait for "Serving on ..."
+# (R=4 loads the union of the 5c87 R=3 + 5a87 R=4 clusters and parses the zone table.)
 
 # 2. Frontend
 cd web && npm install && npm run dev
@@ -121,8 +139,9 @@ cd web && npm install && npm run dev
 
 Open **<http://localhost:5173/>** (or the next free port Vite prints, e.g. `5174`, if 5173
 is taken; use `localhost`, not `127.0.0.1` - Vite binds IPv6).
-Drag to orbit; click S then G; use the scope buttons. Quick backend checks:
-`curl localhost:5577/info`, `curl 'localhost:5577/geometry?r=0'`,
+Drag to orbit; click S then G; use the scope buttons or the zone picker. Quick backend
+checks: `curl localhost:5577/info`, `curl 'localhost:5577/geometry?r=0'`,
+`curl localhost:5577/zones` (226 zones), `curl 'localhost:5577/geometry?zone=Jangan'`,
 `curl 'localhost:5577/path?sx=13920&sy=243.6&sz=54240&gx=14880&gy=244&gz=55200'`.
 
 ## Decisions (resolved this cut)
@@ -183,6 +202,26 @@ Drag to orbit; click S then G; use the scope buttons. Quick backend checks:
   `third_party/pathfinder` must not be modified. So the viz **reconstructs** height itself.
   The `bot` also does not compute real path heights (waypoints built from a `y=0` input; the
   server snaps movement to the ground) - there is no authoritative height logic to copy.
+- **A Polyanya timeout returns an EMPTY result, not an error (pass-4 root cause).** When the
+  150ms deadline fired, `Pathfinder::findShortestPath`'s reachability pre-check
+  (`canGetToState`) returned `false` -> `findShortestPath` returned an empty path, which
+  `path.cpp` reported as `"No path found"` - **indistinguishable from a genuine disconnect**.
+  The only way to tell them apart is to time the call. So treat any pre-pass-4 "No path"
+  observation as suspect; a real disconnect rejects near-instantly, a timeout runs the full
+  budget. (The viz now uses 5s + labels timeouts; the `bot` keeps 150ms.)
+- **`NavmeshTriangulation` uses a fixed origin region 16512** (`navmeshTriangulation.hpp`,
+  `setOriginRegion`/default) for its absolute<->region transforms, **independent of which
+  regions are loaded**. This is why per-zone triangulations (each built from only that zone's
+  regions) all share one global coordinate frame: a zone far from Hotan renders centered and
+  its S->G coords round-trip correctly (verified: Jangan renders at abs ~(76000, _, 63000)).
+- **Zone table format (`textzonename_*.txt`, pass 4).** UTF-16 LE, tab-delimited; **field
+  index 2 = decimal region id**, **field index 9 = English zone name**; a zone is the set of
+  regions sharing one English name. Of **655** distinct names, only **226 are loadable**: the
+  other 429 are **instanced dungeons** whose index-2 column is a symbolic codeName
+  (`DH_A01_F01_ROOM_01`), not a number, AND this extract has **no dungeon navmesh at all**
+  (`nv_[8-f]*.nvm` count = 0), so they are unrenderable regardless. `zones.cpp` parses index-2
+  numerically and skips the rest. (silkroad_lib's `TextZoneNameData` parser was NOT reused: it
+  uses a different column offset and exposes only a forward `regionId->name` map.)
 
 ## Fixed - pass 1
 
@@ -287,8 +326,51 @@ Drag to orbit; click S then G; use the scope buttons. Quick backend checks:
   was never in the Vite proxy, so the client had always fallen back to its default
   `maxRadius`/radius; `vite.config.js` now proxies `/info`.
 
+## Fixed / added - pass 4 (this session, viz-only - no shared `silkroad_lib` change)
+
+- **Path-timeout fix + honest labeling (`path.cpp`).** The viz raised its own Polyanya
+  timeout from 150ms to **5s** (`kPathTimeout`) and now distinguishes `"Search timed out
+  (>N ms)"` from `"No path found"` by timing the call (the library returns an empty result on
+  timeout either way - see the pass-4 finding above). **Proven**: a query that reported "No
+  path" at 150ms (pinned at ~164ms) returns a valid 838-waypoint path in ~2.4s with the larger
+  budget. Rationale: the viz is an interactive debugging tool, so a correct answer in a couple
+  of seconds beats a fast wrong "No path". Caveat: the `"Search timed out"` branch is correct
+  by construction but **not exercised live** (no realistic query now exceeds 5s).
+- **9x9 scope recentered on `5a87` (`main.cpp`).** Added R=4 with a per-scope center (R<=3 ->
+  `5c87`, R=4 -> `5a87`) and a **union** parser allow-list so both clusters load. The 9x9 is
+  **not concentric** - switching into it shifts the view ~2 regions south (a deliberate,
+  user-confirmed choice). Verified: 9x9 loads 73 regions (8 of the 81 cells are non-existent
+  map-edge regions).
+- **Closed/sealed/non-existent render filter (`geometry.cpp`, `regionIsPassable`).** A region
+  is rendered only if it has >=1 walkable tile AND (when other regions share the view) >=1
+  usable - not fully blocked - global edge to a loaded neighbor; the single-region case is
+  guarded so a 1x1 is never blanked. Non-existent regions were already skipped. **Verified no
+  false positives** (r=2 -> 25/25, r=3 -> 49/49 unchanged; r=4 -> 73/81 where all 8 dropped are
+  non-existent). The closed/sealed **true-positive path is NOT exercised** by the current
+  clusters (no loaded region is actually closed/sealed) - it is in place but unproven on live
+  data.
+- **Load-by-zone (`zones.cpp` + `server.cpp` + web).** New `/zones`, `/geometry?zone=NAME`,
+  and `/path?...&zone=NAME`. Zones build on demand - a fresh `Navmesh` + `NavmeshTriangulation`
+  + geometry per zone, cached forever behind a mutex (move-assign avoids a deep `Navmesh`
+  copy); the cache is **node-stable** so a returned pointer stays valid for lock-free path
+  queries. The web client adds a type-ahead zone picker. Verified end-to-end: 226 zones listed,
+  Jangan (6 regions) renders and an in-zone S->G path returns ok; first build ~0.17s, cached
+  ~0.005s. The closed/sealed filter applies to zone regions too.
+
 ## Known gaps / issues (open)
 
+- **(pass 4) Zone cache is unbounded** - every visited zone keeps its navmesh + triangulation
+  + geometry forever. Fine in practice (median zone = 1 region; only 14 zones > 50, max 254),
+  but the few big zones (`Mirror Dimension` 254, the shipwreck zones 224) cost a multi-second
+  **first** load that blocks while building (the build holds a mutex). Add an LRU only if
+  memory becomes an issue.
+- **(pass 4) Instanced-dungeon zones (429 of 655) are unsupported** - their index-2 region id
+  is a symbolic codeName and this extract has no dungeon navmesh, so they are unrenderable.
+  Supporting them would need a codeName->region-id map AND dungeon `nv_8*.nvm` data.
+- **(pass 4) Two pass-4 code paths are unproven on live data**: the closed/sealed filter's
+  true-positive (no loaded region is actually closed/sealed) and the `"Search timed out"`
+  label (no realistic query exceeds 5s). Both are correct by construction; watch for them when
+  testing other regions/zones.
 - **Reconstructed waypoints are surface samples, not the true mesh.** With the pass-2 fix +
   ~10-unit densification a climb now follows the actual ramp/stairs surface in small steps
   (no teleport), but it is still a poly-line sampled off the surface, not the mesh itself -
@@ -320,7 +402,8 @@ Drag to orbit; click S then G; use the scope buttons. Quick backend checks:
   vs right-handed three.js). It is a consistent orientation reference either way; verify E/W
   (or N/S) against the known Hotan layout and flip one axis in `compassDirs` if needed.
 - **Per-object draw calls don't scale**: ~250 meshes at R=2 (~31 FPS headless, 12.5 MB
-  geometry). Fine for 1x1/3x3/5x5; not for the full ~4021-region map.
+  geometry; R=4/9x9 geometry is ~35 MB). Fine for 1x1..9x9 and the (mostly small) zones; not
+  for the full ~4021-region map.
 - **`silkroad_lib` changes are validated only via the viz on macOS (TOP OPEN RISK).** Six
   navmesh-viz-driven changes have accumulated, four behavior-affecting:
   (1) loose-directory `Pk2ReaderModern` mode *(additive)*;
@@ -353,12 +436,14 @@ Drag to orbit; click S then G; use the scope buttons. Quick backend checks:
    guard, plus the pass-1 cross-region link fix. Watch for paths that newly return "no path"
    where the bot previously walked, and for seam crossings opened where a corridor bridge was
    intended.
-2. **Resume testing the UI/GUI queries** (active task): more scope switching, picking on
-   stacked surfaces (walls/structures vs ground), cross-region paths, the now-fixed `0x08`
-   seam cases, and failure messaging. Use the on-screen log panel + the `0x00`/`0x08` toggle to
-   capture the exact data behind any oddity. Every fix so far was found this way - expect more
-   (new Polyanya edge cases like the un-guarded `createCircleConsciousLine`, other
-   fortresses/regions, 5x5 scope). **Reproducible pass-3 seam test** (Hotan): objects
+2. **Resume testing the UI/GUI queries** (active task): more scope switching (now incl.
+   **9x9** and **zone** loading), picking on stacked surfaces (walls/structures vs ground),
+   cross-region paths, the now-fixed `0x08` seam cases, and failure messaging (note: "No path"
+   vs the new "Search timed out" labels). Use the on-screen log panel + the `0x00`/`0x08`
+   toggle to capture the exact data behind any oddity. Every fix so far was found this way -
+   expect more (un-guarded `createCircleConsciousLine`, other fortresses/regions, distant
+   zones, the closed/sealed filter on a region that is genuinely sealed). **Reproducible
+   pass-3 seam test** (Hotan): objects
    A=`1569139713` (Y~146.6) and B=`1585925122` (Y~146.3) meet along a `0x08` seam at absolute
    Z~57297 spanning X 14523..14648 (link id 1). Straight crossing
    `S(14584.5,146.64,57137) -> G(14584.5,146.348,57310)` must stay at X~14584.5 (no detour);
@@ -368,18 +453,23 @@ Drag to orbit; click S then G; use the scope buttons. Quick backend checks:
    in `compassDirs` if mirrored.
 4. **Optional overlays**: walkable-mask coloring; triangulation-triangle / full
    constraint-edge debug view (stitch-edge overlay already exists).
-5. **Scale toward the full map** (the ~4021-region roadmap): merge each region to a few
+5. **Polish load-by-zone** (pass 4 follow-ups): bound the zone cache (LRU); a background /
+   non-blocking build for the few big zones; optionally a codeName->region-id map + dungeon
+   `nv_8*.nvm` data to surface the 429 instanced-dungeon zones.
+6. **Scale toward the full map** (the ~4021-region roadmap): merge each region to a few
    draw calls; glTF/glb (or binary) per-region transport with view-driven streaming + LRU
    eviction; LOD/frustum culling; cull empty/water regions; a 2D minimap for overview.
-   Pathfinding is already global server-side (one absolute plane spans all loaded regions),
-   so only geometry needs streaming.
+   Pathfinding is already global server-side (one absolute plane spans all loaded regions);
+   the per-zone on-demand build + cache (pass 4) is a first step toward this streaming model.
 
 ## Backend entry points (authority: pathfinding.md)
 
 - Parse: `sro::pk2::Pk2ReaderModern{dir}` (loose mode) -> `sro::pk2::NavmeshParser` ->
   `parseNavmesh()` -> `sro::navmesh::triangulation::NavmeshTriangulation`.
 - Query: `pathfinder::Pathfinder<NavmeshTriangulation>{tri, cfg}.findShortestPath(S, G)`
-  with `cfg = {kPolyanya, agentRadius=3.14, timeout=150ms}`; S/G are absolute `Vector3`.
+  with `cfg = {kPolyanya, agentRadius=3.14, timeout=5s in the viz / 150ms in the bot}`; S/G
+  are absolute `Vector3`. A timeout returns an **empty** result (looks like "no path") - the
+  viz times the call to label it.
 - Geometry: `Region::tileVertexHeights` (97x97) + `enabledTiles` (96x96);
   `Navmesh::getTransformedObjectResourceForRegion(instanceId, regionId)` for BMS meshes;
   `NavmeshTriangulation::transformRegionPointIntoAbsolute` for the absolute frame.

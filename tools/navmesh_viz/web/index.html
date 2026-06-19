@@ -24,6 +24,12 @@
       #hud button:disabled { opacity: 0.4; cursor: not-allowed; }
       #scope { margin-top: 10px; display: flex; gap: 6px; }
       #scope button.active { background: #2d6cff; border-color: #2d6cff; color: #fff; }
+      #zone { margin-top: 8px; display: flex; gap: 6px; }
+      #zone input {
+        flex: 1; min-width: 0; font: inherit; color: #d7dde8; background: #1b2330;
+        border: 1px solid #38445a; border-radius: 6px; padding: 4px 8px;
+      }
+      #zone button { margin-top: 0; }
       #status { margin-top: 8px; color: #9aa6b8; }
       #log {
         margin-top: 8px; max-height: 40vh; overflow-y: auto;
@@ -54,6 +60,13 @@
         <button data-radius="0">1x1</button>
         <button data-radius="1">3x3</button>
         <button data-radius="2">5x5</button>
+        <button data-radius="3">7x7</button>
+        <button data-radius="4">9x9</button>
+      </div>
+      <div id="zone">
+        <input id="zoneInput" list="zoneList" placeholder="type to search zone..." autocomplete="off">
+        <datalist id="zoneList"></datalist>
+        <button id="loadZone">Load zone</button>
       </div>
       <div id="status">Loading geometry...</div>
       <button id="reset">Reset S/G</button>

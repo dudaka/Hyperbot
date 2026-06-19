@@ -22,24 +22,39 @@ cmake --build build --target navmesh_viz
 ## Run
 
 Region scope is the center region `5c87` (Hotan) plus a ring of radius R
-(0 = single region, 1 = 3x3 = 9, 2 = 5x5 = 25). `serve` loads every ring up to R
-and caches geometry per radius, so the web UI can switch scope with no reload.
+(0 = single region, 1 = 3x3 = 9, 2 = 5x5 = 25, 3 = 7x7 = 49, 4 = 9x9 = 81). Scopes
+0-3 are concentric on `5c87`; the 9x9 (R=4) recenters on `5a87` (2 regions south),
+so switching into it shifts the view south. `serve` loads every ring up to R and
+caches geometry per radius, so the web UI can switch scope with no reload. Regions
+that are non-existent, closed (no walkable area), or sealed off (no usable link to a
+neighbor in view) are omitted from rendering.
 
 ```
 # Validate: dump geometry to a file + run a sample path query.
 ./build/navmesh_viz dump  ../../sro-data/Data 0
 
-# Serve all three scopes (load R=2) on :5577.
-./build/navmesh_viz serve ../../sro-data/Data 2 5577
+# Serve all five scopes (load R=4) on :5577.
+./build/navmesh_viz serve ../../sro-data/Data 4 5577
 ```
 
 Endpoints (CORS-enabled):
 - `GET /geometry?r=N` - region set at ring radius N (clamped to the loaded max). Each object
   also carries `outlineEdges` (flat `[srcVertexIndex, destVertexIndex, flag]` triples) for
   edge inspection - flag `0x00` = object<->terrain stitch, `0x08` = object<->object stitch.
-- `GET /path?sx&sy&sz&gx&gy&gz` - Polyanya path between two absolute-frame points.
+- `GET /geometry?zone=NAME` - the regions of a named zone, built on demand (a separate
+  navmesh + triangulation per zone) and cached. Same closed/sealed/non-existent render
+  filter as the radius scopes.
+- `GET /zones` - `[{"name":..,"regions":N}, ...]`, the loadable zones sorted by name.
+- `GET /path?sx&sy&sz&gx&gy&gz[&zone=NAME]` - Polyanya path between two absolute-frame
+  points; with `zone` the query runs within that zone's triangulation, otherwise the radius one.
 - `GET /info` - `{"maxRadius":N,"agentRadius":R}`: the largest ring the client may request,
   and the pathfinder's agent (collision) radius so the client can draw the footprint to scale.
+
+Zones come from the Silkroad `textzonename_*.txt` files (under
+`<dataPath>/../Media/server_dep/silkroad/textdata`): a zone is the set of regions sharing
+one English name (field index 9), keyed by the numeric region id (field index 2). Rows whose
+region-id column is a symbolic codeName (instanced dungeons, which have no overworld navmesh)
+are skipped, so only loadable zones are listed.
 
 ## Web client
 

@@ -183,9 +183,15 @@ PathResult findPath(
     const sro::math::Vector3 &goalAbsolute) {
   PathResult result;
 
+  // The viz is an interactive debugging tool, not the real-time bot, so it can
+  // afford a generous search budget: a correct answer after a couple of seconds
+  // beats a fast wrong "No path". A query exceeding this is reported as a timeout
+  // (distinct from a genuine disconnect) so the log never conflates the two.
+  constexpr std::chrono::milliseconds kPathTimeout{5000};
+
   pathfinder::PathfinderConfig config(pathfinder::PathfinderAlgorithm::kPolyanya);
   config.setAgentRadius(kAgentRadius);
-  config.setTimeout(std::chrono::milliseconds(150));
+  config.setTimeout(kPathTimeout);
   pathfinder::Pathfinder<sro::navmesh::triangulation::NavmeshTriangulation> pathfinder(
       triangulation, config);
 
@@ -220,6 +226,7 @@ PathResult findPath(
 
   // Build the waypoints while the result (which owns the segment objects) is
   // still alive - the segment pointers must not outlive it.
+  const auto searchStart = std::chrono::high_resolution_clock::now();
   try {
     const auto pathfindingResult =
         pathfinder.findShortestPath(startAbsolute, goalAbsolute);
@@ -237,7 +244,17 @@ PathResult findPath(
   }
 
   if (points.empty()) {
-    result.error = "No path found";
+    // The library returns an empty path both for a genuine disconnect and on
+    // timeout (its reachability pre-check yields "no way to get there" when the
+    // deadline fires). Disambiguate by elapsed time so the log is honest: a real
+    // disconnect rejects near-instantly, a timeout runs to the full budget.
+    const auto elapsed = std::chrono::high_resolution_clock::now() - searchStart;
+    if (elapsed >= kPathTimeout) {
+      result.error =
+          "Search timed out (>" + std::to_string(kPathTimeout.count()) + " ms)";
+    } else {
+      result.error = "No path found";
+    }
     return result;
   }
 

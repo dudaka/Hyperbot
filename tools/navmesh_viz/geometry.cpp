@@ -138,6 +138,40 @@ bool writeObject(
   return true;
 }
 
+// A region is renderable only if a character could stand and move within it: it
+// must have at least one walkable terrain tile AND, when other regions share the
+// view, at least one usable (not fully blocked) global edge to a loaded neighbor.
+// Otherwise it is closed (no walkable area) or sealed off from the cluster.
+bool regionIsPassable(const sro::navmesh::Region &region,
+                      const std::set<uint16_t> &loaded) {
+  bool hasWalkable = false;
+  for (const auto &row : region.enabledTiles) {
+    for (bool tile : row) {
+      if (tile) {
+        hasWalkable = true;
+        break;
+      }
+    }
+    if (hasWalkable) {
+      break;
+    }
+  }
+  if (!hasWalkable) {
+    return false;
+  }
+  if (loaded.size() <= 1) {
+    return true; // single-region scope: no neighbor to require a link to
+  }
+  const uint8_t blocked = static_cast<uint8_t>(sro::navmesh::EdgeFlag::kBlocked);
+  for (const sro::navmesh::GlobalEdge &edge : region.globalEdges) {
+    if (loaded.count(static_cast<uint16_t>(edge.assocRegion1)) != 0 &&
+        (static_cast<uint8_t>(edge.flag) & blocked) != blocked) {
+      return true;
+    }
+  }
+  return false;
+}
+
 } // namespace
 
 std::string buildGeometryJson(
@@ -145,6 +179,14 @@ std::string buildGeometryJson(
     const sro::navmesh::triangulation::NavmeshTriangulation &triangulation,
     const std::set<uint16_t> &regionIds) {
   const auto &regionMap = navmesh.getRegionMap();
+  // The loaded regions that are also in this scope - used to decide whether a
+  // region still has a usable link to a neighbor that is itself being rendered.
+  std::set<uint16_t> loaded;
+  for (uint16_t regionId : regionIds) {
+    if (regionMap.count(regionId) != 0) {
+      loaded.insert(regionId);
+    }
+  }
   std::ostringstream out;
   out << "{\"regions\":[";
   bool firstRegion = true;
@@ -154,6 +196,9 @@ std::string buildGeometryJson(
       continue;
     }
     const sro::navmesh::Region &region = it->second;
+    if (!regionIsPassable(region, loaded)) {
+      continue; // closed or sealed off - omit from rendering
+    }
     if (!firstRegion) {
       out << ',';
     }

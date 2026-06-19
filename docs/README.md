@@ -9,13 +9,14 @@ codebase.
   context files; keep them correct and consistent as work proceeds.
 - **Active goal:** a **three.js visualization** that renders the navmesh (terrain + BMS
   objects across regions) and interactively queries paths between two points, using
-  Hyperbot's **pathfinding/navigation as the backend**. The first cut is **implemented and
-  runnable** in `tools/navmesh_viz/` (standalone C++ service + `web/` three.js client;
-  region scopes 1x1/3x3/5x5 centered on region `5c87`).
+  Hyperbot's **pathfinding/navigation as the backend**. It is **implemented and runnable** in
+  `tools/navmesh_viz/` (standalone C++ service + `web/` three.js client; region scopes
+  1x1/3x3/5x5/7x7 on `5c87` plus a 9x9 on `5a87`, and **load-by-zone**).
 - Status, how-to-run, key findings, gaps, and next steps are in
   **[threejs-visualization-plan.md](threejs-visualization-plan.md)**; the backend authority
-  is **[pathfinding.md](pathfinding.md)**. Current task: **test the web UI and GUI path
-  queries**, then push the scaling/quality work listed there.
+  is **[pathfinding.md](pathfinding.md)**. Current task: **run the Linux `bot` regression**
+  for the shared pathfinding changes (top risk), validate the coincident-seam threshold, and
+  continue GUI path-query testing - then the scaling/quality work listed there.
 
 ## Read in this order
 
