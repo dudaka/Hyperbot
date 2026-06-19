@@ -42,8 +42,14 @@ PK2 navmesh data  ->  Navmesh  ->  NavmeshTriangulation  ->  Pathfinder (Polyany
 per tile, region = 1920 units), surface flags (water/ice) + `surfaceHeights`, navigation
 cells, and edges (`InternalEdge` within a region, `GlobalEdge` on region borders, with
 block/bridge/entrance/siege flags). It also loads object meshes: `ObjectResource`
-(`vertices: vector<Vector3>`, triangle `cells`, `cellAreaIds`) and `ObjectInstance`
-(placement: `center`, `yaw`, `regionId`).
+(`vertices: vector<Vector3>`, triangle `cells`, `cellAreaIds`, plus `outlineEdges` /
+`inlineEdges` as `PrimMeshNavEdge` with a raw `flag`) and `ObjectInstance` (placement:
+`center`, `yaw`, `regionId`). **Object outline-edge flags** (`EdgeFlag`: block bits
+`0x01`/`0x02`, `kInternal=4`, `kGlobal=8`, `kBridge=16`, `kEntrance=32`, `kSiege=128`)
+matter for stitching: an outline edge with flag **`0x00` stitches the object to the
+terrain** (a real on-ramp where heights match), whereas **`0x08` stitches it to another
+object** (object<->object, traversed via a link only) - conflating the two caused the
+terrain->object "teleport" fixed during the navmesh-viz work (§8).
 
 `Region::getHeightAtPoint` (navmesh.cpp:421) does **bilinear interpolation** within a
 20-unit tile, with an ice-surface upward override:
@@ -170,11 +176,23 @@ triangles; `getSuccessorStateThroughEdgeIfPossible` decides crossing + resulting
   edge -> pass through staying on terrain (**walking under** the bridge); object external
   unblocked edge -> step **onto** the object, unless we're emerging from under it (detected
   by current-triangle-overlaps-object && neighbor-doesn't); terrain blocking -> no
-  successor (cliff/wall).
-- **Links** = the explicit stairway mechanism: a precomputed triangle patch
+  successor (cliff/wall). **Only `0x00` outline edges (object<->terrain stitch) are valid
+  step-on ramps; `0x08` outline edges (object<->object stitch) are made blocking from terrain
+  and are crossed only object-to-object via their link** - see §8 (the navmesh-viz `0x08`
+  fix). Also note: interior **blocked terrain has no constraint edge** (only the per-triangle
+  `blockedTerrainTriangles_` flag), so the on-terrain marker-0 pass-through path is now also
+  guarded against entering a blocked-terrain triangle.
+- **Links** = the explicit object<->object mechanism: a precomputed triangle patch
   (`linkDataMap_[id].accessibleTriangleIndices`) bridging two objects
   (`globalObjectLinks_[id]`). While traversing, cross any edge staying inside the patch;
-  exit on the matching link edge onto the other object.
+  exit on the matching link edge onto the other object. **Coincident seams (navmesh-viz
+  pass 3):** when a link's two object edges are near-coincident (coplanar floors abutting -
+  `LinkData::edgesCoincident`, set in `buildLinkData` when both endpoint gaps are
+  `< kCoincidentSeamEpsilon = 8.0`), the patch between them is a degenerate sliver that
+  connects one object at only one end. `getSuccessors` then crosses such a seam **directly**
+  onto the other object wherever it sits on the far triangle (like a `0x00` on-ramp), so the
+  search takes the straight crossing instead of funneling through the corner. Only
+  separated-edge links (real bridges) still traverse the corridor. See §8.
 
 **The bridge duality** is the proof the 2.5D flattening works: the same physical outline
 edge is *blocking* when you're on the bridge and *pass-through* when you're on the terrain
@@ -211,15 +229,82 @@ beneath it - disambiguated solely by the state's layer.
 - **Arc -> midpoint approximation** can produce a slightly wrong path.
 - **"No return through entry edge"** shortcut breaks the Takla bridge case (commented TODO).
 - **Object-overlap link inconsistencies** are handled defensively ("won't work correctly if
-  the objects overlap").
-- **No-path = throw**: `findShortestPath` empty/throwing propagates as an exception; callers
-  must handle "no path."
-- **Output waypoints have height ~0** - any 3D consumer must reconstruct surface height.
+  the objects overlap"). A **cross-region** link is triangulated inside the single region that
+  absorbs both linked objects, so the two objects genuinely overlap on the shared exit
+  triangle. `getSuccessors` was updated (during the navmesh-viz work) to pick the link-exit
+  object from the *exit edge's own link side* (`isOnSourceSideOfLink`) instead of the old
+  "impossible for both objects to be on this triangle" `throw`, and to yield no successor
+  (instead of aborting the search) when the link is unknown in the current region. Validated
+  via `tools/navmesh_viz` on macOS; **not yet** regression-tested on the Linux `bot`.
+- **Object `0x08` outline edges were used as terrain on-ramps (fixed, navmesh-viz work).**
+  In `navmeshTriangulation.cpp` both `0x00` and `0x08` outline edges were treated as
+  non-blocking "way onto the object", so a search on terrain could step straight up onto a
+  raised object floor at an object<->object (`0x08`) seam. Now `0x08` edges get
+  `kGlobal | kBlocking` (blocking from terrain; the object<->object link still works because
+  link handling runs before the blocking check on the object side); only `0x00` edges stitch
+  terrain->object. Caveat: confirm this does not over-block object<->object connections whose
+  link data is missing (the "link data does not actually exist" branch). macOS/viz-validated;
+  **not yet** Linux `bot`-tested.
+- **On-terrain walks could cross blocked terrain (fixed, navmesh-viz work).** Interior blocked
+  terrain has no constraint edge (only `blockedTerrainTriangles_`), and `getSuccessors` checked
+  that flag only when leaving an object / at start+goal. A guard now drops any successor that
+  stays on terrain but enters a blocked-terrain triangle. macOS/viz-validated; **not yet**
+  Linux `bot`-tested.
+- **Object<->object `0x08` coincident seams crossed directly (fixed, navmesh-viz pass 3).**
+  When two coplanar object floors abut, their `0x08` link's two edges are near-coincident and
+  the triangulated link patch between them is a degenerate sliver that connects one object at
+  only one end - so a search funnels through that corner (a ~60-unit detour) and, in the dense
+  geometry, can trip a Polyanya numeric degeneracy that aborts the search. `buildLinkData` now
+  flags `edgesCoincident` (endpoint gap `< kCoincidentSeamEpsilon = 8.0`), and `getSuccessors`
+  crosses a coincident seam directly object-to-object (like a `0x00` on-ramp), bypassing the
+  corridor; separated-edge links keep the corridor. **Heuristic risk:** a genuine bridge whose
+  facing edges sit < 8 units apart would be misclassified - validate against the bandit/jangan
+  fortress bridges. Underlying cause unfixed: `accessibleTriangleIndices` omits tiny triangles
+  below the `trianglesOverlap` epsilon (the "Big TODO" in `buildLinkData`). macOS/viz-validated;
+  **not yet** Linux `bot`-tested.
+- **Polyanya "i1/i2 is inf" degeneracy guarded in the vendored lib (navmesh-viz pass 3).** The
+  interval-projection "parallel edges closer than the agent radius" case in
+  `third_party/Pathfinder/pathfinder.h` (`doesRightIntervalIntersectWithLeftOfSuccessorEdge`
+  and its mirror) **threw**, aborting the whole search - masked as "No path" under the 150ms
+  timeout. The two throw sites now fall back to the library's own "skip this successor unless we
+  can turn around the constraint" logic (regression-safe: only previously-crashing inputs
+  change). This **modifies `third_party/`** - an authorized exception to the usual rule - kept
+  as `tools/navmesh_viz/patches/pathfinder-polyanya-fixes.patch` (which also bundles the
+  reachability guard below), **not** a submodule bump (a fresh `git submodule update` reverts
+  it). Now optional: the coincident-seam fix avoids the degenerate corridor, so the case is no
+  longer reached for known data.
+- **`canGetToState` reachability pre-check re-expansion blow-up guarded (navmesh-viz pass 5,
+  in the same patch).** Before Polyanya runs, `findShortestPath` calls `canGetToState` - a
+  greedy best-first triangle search that returns whether the goal is reachable at all. It
+  enqueued successors already on the heap and had **no closed-set skip at pop**, so on dense /
+  large meshes the same states were re-expanded thousands of times (observed ~20M expansions
+  over only ~thousands of distinct states, heap into the millions) and the pre-check **timed
+  out -> empty result -> reported as "no path"/"timeout"**. This was the real cause of the
+  earlier asymmetric "starts-on-an-object-surface times out, starts-on-terrain is fast" puzzle.
+  Fix: a one-line `if (visited.find(currentState) != visited.end()) continue;` at pop. Effect:
+  those object-start queries drop from a 5s timeout to ~0.5s; each state is expanded once.
+  Regression-safe (reachability is boolean; skipping an already-expanded state changes nothing).
+- **No-path = throw OR empty**: `findShortestPath` either throws (bad start/goal triangle,
+  degeneracy) or returns an **empty** path. A **timeout** returns empty too (its reachability
+  pre-check `canGetToState` returns `false` on the deadline), so an empty result is
+  **indistinguishable from a genuine disconnect** unless you time the call. The `bot` uses
+  150ms (above); the `navmesh_viz` tool raised its own copy to **30s** and times the call to
+  report `"Search timed out"` vs `"No path found"` (see threejs-visualization-plan.md, pass 5).
+- **Polyanya cost is genuinely O(millions of expansions) for very long paths.** A path that
+  crosses ~20 regions of finely-triangulated terrain can need ~3.9M interval expansions and
+  ~22s - and yet be a real, optimal path (measured on the 23x23 viz scope; the reachability
+  pre-check confirmed connectivity in ~2k expansions, and Polyanya's `expansions == visited`,
+  so there is no re-expansion bug - it is inherent scale). This is why the viz budget is 30s;
+  it is distinct from the `canGetToState` bug above (that was re-expansion; this is distance).
+- **Output waypoints have height ~0** - any 3D consumer must reconstruct surface height. The
+  Pathfinder result (`StraightPathSegment`) exposes only 2D points; the A* surface/layer state
+  is internal and not returned, so a 3D consumer must re-derive which surface each leg is on.
 
 ## 9. Prior art in this repo
 
 The **legacy** `ui/` app already renders the navmesh in 2D (top-down, Qt `QGraphicsScene`):
 `ui/navmeshView.*`, `ui/regionGraphicsItem.*`, `ui/map/`. Useful as a reference for which
 data is extracted and how regions are drawn - but it is the deprecated UI (do not modify),
-and it is 2D, so it cannot show the stacked-surface behavior. The planned three.js demo is
-the 3D successor (see [threejs-visualization-plan.md](threejs-visualization-plan.md)).
+and it is 2D, so it cannot show the stacked-surface behavior. The 3D successor now exists
+as `tools/navmesh_viz/` (a standalone service over this pathfinder + a three.js client);
+see [threejs-visualization-plan.md](threejs-visualization-plan.md).

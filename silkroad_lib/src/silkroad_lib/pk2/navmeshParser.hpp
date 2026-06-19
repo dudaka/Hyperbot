@@ -8,6 +8,8 @@
 #include <array>
 #include <cstdint>
 #include <map>
+#include <optional>
+#include <set>
 #include <sstream>
 #include <string>
 
@@ -29,10 +31,16 @@ public:
   NavmeshParser(Pk2ReaderModern &pk2Reader);
   navmesh::Navmesh parseNavmesh();
 
+  // When set, only these region ids are parsed (still subject to the map's
+  // real enable bit). Overrides the built-in interesting-area parse-reduction
+  // hack; lets a tool target a specific region set. Default keeps prior behavior.
+  void setRegionAllowList(std::set<uint16_t> regions);
+
 private:
   Pk2ReaderModern &pk2Reader_;
   std::map<int, ObjectFileInfo> objectFileInfoMap_;
   MapInfo mapInfo_;
+  std::optional<std::set<uint16_t>> regionAllowList_;
 
   void buildObjectFileInfoMap();
   void parseMapInfo();

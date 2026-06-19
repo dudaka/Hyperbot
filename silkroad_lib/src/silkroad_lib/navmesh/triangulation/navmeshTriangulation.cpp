@@ -1400,8 +1400,21 @@ void NavmeshTriangulation::buildNavmeshForRegion(const Navmesh &navmesh, const R
         // Event zone
         // TODO: Not yet handling
         continue;
+      } else if (edge.flag & 8) {
+        // Global edge (0x08) stitched to ANOTHER OBJECT, not terrain. It is only
+        // traversable object-to-object via its link (handled below / on the
+        // object side). From the terrain it must be blocking: otherwise the
+        // search steps from the ground straight up onto a raised object floor
+        // (e.g. a rampart landing), producing a vertical "jump" in the path.
+        // The genuine terrain-to-object stitch uses 0x00 edges, where the object
+        // meets the terrain at matching height.
+        if (edge.destCell != -1) {
+          throw std::runtime_error("Expecting that the dest cell is always -1 since this is an outline edge");
+        }
+        edgeFlags.push_back(EdgeConstraintFlag::kGlobal);
+        edgeFlags.push_back(EdgeConstraintFlag::kBlocking);
       } else {
-        // Non-blocking edges are our way "onto" the object
+        // Non-blocking edge (0x00) stitched to terrain: our way "onto" the object.
         if (edge.destCell != -1) {
           throw std::runtime_error("Expecting that the dest cell is always -1 since this is an outline edge");
         }

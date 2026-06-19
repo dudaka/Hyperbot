@@ -8,11 +8,48 @@ pybind11; monitoring is a Qt6 desktop app.
 
 ## Current focus
 
-Building a **three.js visualization** of the navmesh (terrain + BMS objects across
-regions) with interactive S->G path queries, using Hyperbot's **pathfinding/navigation
-as the backend**. Brief + open questions + next steps: `docs/threejs-visualization-plan.md`.
-Backend authority: `docs/pathfinding.md`. (The minimal backend is `silkroad_lib` + the
-`Pathfinder` submodule - the full `bot` target is not needed.)
+A **three.js visualization** of the navmesh (terrain + BMS objects) with interactive
+S->G path queries, using Hyperbot's **pathfinding/navigation as the backend**. It is
+**implemented and runnable** in `tools/navmesh_viz/` (standalone C++ HTTP service + a
+`web/` three.js client). Scopes are concentric `(2R+1)x(2R+1)` rings **1x1..23x23** on a
+single center region `5f82`, picked from a dropdown; you can also **load any named zone**.
+The default view is a **flat top-down, North-up / East-right map**.
+
+**Several hardening passes are done.** Passes 1-3 (shared `silkroad_lib`, committed):
+layer-aware path-height DP, long-segment densification, a cross-region stairway-link fix, the
+**object-stitch vertical "teleport"** fix (`0x08` object<->object seams were wrongly usable as
+terrain->object on-ramps; only `0x00` object<->terrain should be), a blocked-terrain-walk
+guard, and the `0x08` **coincident-seam** direct-crossing fix. Pass 4 (viz-only, committed):
+path-timeout labeling, closed/sealed render filter, load-by-zone (226 zones from
+`textzonename_*.txt`). The **`Pathfinder` submodule** carries two fixes as an in-repo patch
+(`tools/navmesh_viz/patches/pathfinder-polyanya-fixes.patch`, an authorized exception - **not**
+a submodule bump, so reapply after `git submodule update`): a Polyanya degeneracy guard
+(pass 3) and a `canGetToState` reachability guard (pass 5).
+
+Pass 5 (this session): (a) collapsed the dual center (`5c87`/`5a87`) to a single **`5f82`** and
+extended scopes to **23x23 (R=11)** behind a dropdown; (b) the **top-down North-up / East-right
+map** (N-S display mirror `world.scale.z=-1` + straight-down camera; picks invert via
+`world.worldToLocal` so reported coords stay true); (c) the **reachability guard** -
+`canGetToState` re-expanded states thousands of times (no closed-set skip at pop) and timed out
+before Polyanya even ran (the real cause of the earlier "object-start times out, terrain-start
+is fast" asymmetry); fixed, those queries 5s->~0.5s; (d) proved long cross-mesh paths are
+**genuine Polyanya scale** (~3.9M expansions / ~22s for a real ~20-region path, not a bug) and
+raised the viz budget **5s->30s**; (e) a **query-time readout** + **Reset view** button.
+
+Current task: **run the Linux `bot` regression** for the shared pathfinding changes (top open
+risk - macOS/viz-validated only; reapply the combined Pathfinder patch first); **validate the
+coincident-seam threshold** (`kCoincidentSeamEpsilon=8.0`) against real fortress bridges; and
+continue GUI path-query testing across the large scopes. Open viz gaps: `5f82` is near the
+**north map edge** so large scopes truncate northward; 23x23 geometry is **~222MB** (heavy
+browser load; R=11 server ~10-15s startup; a long query blocks the UI ~20s); the closed/sealed
+filter's true-positive path is not yet exercised by live data; the zone cache is unbounded; the
+429 instanced-dungeon zones are unsupported (codeName region ids, no dungeon navmesh here).
+
+Status, how-to-run, key findings, gaps, and next steps: `docs/threejs-visualization-plan.md`.
+Tool usage: `tools/navmesh_viz/README.md`. Backend authority: `docs/pathfinding.md`
+(incl. the `0x00`/`0x08` edge semantics). The minimal backend is `silkroad_lib` + the
+`Pathfinder` submodule - the full `bot` target is not needed (the tool even compiles only a
+subset of `silkroad_lib`).
 
 ## Where things live
 

@@ -134,7 +134,19 @@ void NavmeshParser::parseMapInfo() {
   ss.read(reinterpret_cast<char*>(mapInfo_.regionData.data()), mapInfo_.regionData.size());
 }
 
+void NavmeshParser::setRegionAllowList(std::set<uint16_t> regions) {
+  regionAllowList_ = std::move(regions);
+}
+
 bool NavmeshParser::regionIsEnabled(uint16_t regionId) const {
+  // An explicit allow-list (when provided) overrides the interesting-area hack
+  // below, but the region must still be enabled in the map's region bitmap.
+  if (regionAllowList_) {
+    if (regionAllowList_->find(regionId) == regionAllowList_->end()) {
+      return false;
+    }
+    return ((mapInfo_.regionData[regionId >> 3] & (uint8_t)(128 >> regionId % 8))) != 0;
+  }
   // TODO: Remove, temporary hack to reduce the number of regions we parse on startup
   struct InterestingArea {
     InterestingArea(int x, int y) : regionX(x), regionY(y) {}

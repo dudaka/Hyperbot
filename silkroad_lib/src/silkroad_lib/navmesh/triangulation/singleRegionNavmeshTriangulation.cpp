@@ -193,6 +193,13 @@ void SingleRegionNavmeshTriangulation::buildLinkData() {
           linkDataMap_[linkId].accessibleTriangleIndices.insert(triangleIndex);
         }
       }
+
+      // Detect a (near) coincident seam: the two object edges run along the same
+      // line (a coplanar object-to-object stitch) rather than bridging a gap.
+      const double firstGap = pathfinder::math::distance(srcEdgeFirstVertex, destEdgeFirstVertex);
+      const double lastGap = pathfinder::math::distance(srcEdgeLastVertex, destEdgeLastVertex);
+      constexpr double kCoincidentSeamEpsilon = 8.0;
+      linkDataMap_[linkId].edgesCoincident = (firstGap < kCoincidentSeamEpsilon && lastGap < kCoincidentSeamEpsilon);
     }
   }
 }
@@ -311,32 +318,37 @@ absl::InlinedVector<SingleRegionNavmeshTriangulation::State, 3> SingleRegionNavm
         newState.resetLinkId();
         newState.setNewTriangleAndEntryEdge(neighborTriangleIndex, entryEdgeIndex);
 
-        // Figure out which object to put this state on
+        // Figure out which object to put this state on. The exit edge's own
+        // link constraint tells us which side of the link we are crossing, so
+        // we land on the corresponding object - this disambiguates even when a
+        // cross-region link's two objects both overlap this triangle (which is
+        // why the original "both objects" assumption was wrong and threw).
         const auto &thisLink = globalObjectLinks_.at(currentState.getLinkId());
-        const auto objectDatasForTriangle = getObjectDatasForTriangle(neighborTriangleIndex);
         using ObjectIdType = decltype(ObjectData::objectInstanceId);
-        ObjectIdType objId;
-        bool src{false}, dest{false};
-        for (const auto &objectDataForTriangle : objectDatasForTriangle) {
-          if (thisLink.srcObjectGlobalId == objectDataForTriangle.objectInstanceId) {
-            src = true;
-            objId = objectDataForTriangle.objectInstanceId;
-          } else if (thisLink.destObjectGlobalId == objectDataForTriangle.objectInstanceId) {
-            dest = true;
-            objId = objectDataForTriangle.objectInstanceId;
+        bool exitOnSourceSide = false;
+        for (const auto &constraint : getEdgeConstraintData(edgeMarker)) {
+          if (constraint.hasLink() && constraint.getLinkId() == currentState.getLinkId()) {
+            exitOnSourceSide = constraint.isOnSourceSideOfLink();
+            break;
           }
         }
-        if (src && dest) {
-          throw std::runtime_error("Thought it was impossible for both objects to be on this triangle");
-        }
+        const ObjectIdType objId = exitOnSourceSide ? thisLink.srcObjectGlobalId
+                                                    : thisLink.destObjectGlobalId;
+
         // TODO: Get the proper object area
         // Until we have that, check if there even is multiple object areas for this triangle
         using ObjectAreaType = decltype(ObjectData::objectAreaId);
         std::set<ObjectAreaType> objectAreaSet;
-        for (const auto &objectDataForTriangle : objectDatasForTriangle) {
+        for (const auto &objectDataForTriangle : getObjectDatasForTriangle(neighborTriangleIndex)) {
           if (objectDataForTriangle.objectInstanceId == objId) {
             objectAreaSet.insert(objectDataForTriangle.objectAreaId);
           }
+        }
+        if (objectAreaSet.empty()) {
+          // The exit-side object is not actually on this triangle (e.g. the exit
+          // lands on terrain, or on a region that does not carry it). Yield no
+          // successor this way rather than dereferencing nothing.
+          return {};
         }
         if (objectAreaSet.size() > 1) {
           throw std::runtime_error("There are multiple areas for this triangle & object");
@@ -348,7 +360,12 @@ absl::InlinedVector<SingleRegionNavmeshTriangulation::State, 3> SingleRegionNavm
         // We can avoid any constraints, we just must stay within the acceptable area
         auto acceptableTrianglesIt = linkDataMap_.find(currentState.getLinkId());
         if (acceptableTrianglesIt == linkDataMap_.end()) {
-          throw std::runtime_error("We have no list of triangles for this link");
+          // A cross-region link is triangulated within the single region that
+          // owns it. The stitched region border can let the search step into a
+          // neighbor region mid-link, where the link is unknown. Continuing the
+          // link here is not possible, so yield no successor instead of aborting
+          // the search; link traversal stays within its owning region.
+          return {};
         }
         if (acceptableTrianglesIt->second.accessibleTriangleIndices.find(neighborTriangleIndex) == acceptableTrianglesIt->second.accessibleTriangleIndices.end()) {
           // This is not a valid triangle to continue onto; no successor
@@ -382,6 +399,30 @@ absl::InlinedVector<SingleRegionNavmeshTriangulation::State, 3> SingleRegionNavm
                   if (link.srcObjectGlobalId == currentState.getObjectData().objectInstanceId ||
                       link.destObjectGlobalId == currentState.getObjectData().objectInstanceId) {
                     const auto &linkData = linkDataMap_.at(linkId);
+
+                    // Coincident seam: the two objects abut along a shared line, so
+                    // this stitch is crossable directly anywhere the other object is
+                    // present on the far side - exactly like a terrain<->object (0x00)
+                    // on-ramp. Stepping straight across avoids being funneled through
+                    // the degenerate corridor between the two near-coincident edges
+                    // (which collapses to one end of the seam). Polyanya then takes
+                    // the shorter, straight crossing.
+                    if (linkData.edgesCoincident) {
+                      const auto ourId = currentState.getObjectData().objectInstanceId;
+                      const auto otherId = (link.srcObjectGlobalId == ourId) ? link.destObjectGlobalId
+                                                                             : link.srcObjectGlobalId;
+                      for (const auto &neighborObjectData : getObjectDatasForTriangle(neighborTriangleIndex)) {
+                        if (neighborObjectData.objectInstanceId == otherId) {
+                          auto newState = currentState;
+                          newState.setNewTriangleAndEntryEdge(neighborTriangleIndex, entryEdgeIndex);
+                          newState.setObjectData(neighborObjectData);
+                          return newState;
+                        }
+                      }
+                      // The far side does not carry the other object here; fall
+                      // through to the normal link-corridor handling below.
+                    }
+
                     if (linkData.accessibleTriangleIndices.find(neighborTriangleIndex) != linkData.accessibleTriangleIndices.end()) {
                       // This link is for our object
                       State newState(neighborTriangleIndex, entryEdgeIndex);
@@ -577,6 +618,17 @@ absl::InlinedVector<SingleRegionNavmeshTriangulation::State, 3> SingleRegionNavm
     if (neighborAcrossEdge) {
       // Neighbor exists
       auto possibleSuccessor = getSuccessorStateThroughEdgeIfPossible(neighborAcrossEdge->sharedEdgeIndex, neighborAcrossEdge->neighborTriangleIndex);
+      if (possibleSuccessor &&
+          !possibleSuccessor->isOnObject() &&
+          terrainIsBlockedUnderTriangle(neighborAcrossEdge->neighborTriangleIndex)) {
+        // A successor that stays on the terrain must not enter a blocked terrain
+        // triangle (e.g. a fortress wall face). Blocked terrain cells carry no
+        // blocking constraint edge - they are only flagged per-triangle - so
+        // without this check the search walks straight across blocked terrain.
+        // Stepping onto an object (its own surface) over the same cell is still
+        // allowed, which is how a rampart walkway legitimately spans a wall.
+        possibleSuccessor.reset();
+      }
       if (possibleSuccessor) {
         successors.push_back(*possibleSuccessor);
       }

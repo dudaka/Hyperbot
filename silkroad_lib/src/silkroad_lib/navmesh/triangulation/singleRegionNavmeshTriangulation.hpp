@@ -92,6 +92,11 @@ public:
 private:
   struct LinkData {
     std::set<LinkIdType> accessibleTriangleIndices;
+    // True when the link's two object edges are (near) coincident - the objects
+    // abut along a shared seam rather than being bridged across a gap. Such a
+    // stitch is crossable directly anywhere along the seam (see getSuccessors),
+    // instead of funneling through the degenerate corridor between the edges.
+    bool edgesCoincident{false};
   };
   std::map<LinkIdType, LinkData> linkDataMap_;
   void buildLinkData();
